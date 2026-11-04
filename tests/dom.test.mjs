@@ -116,7 +116,7 @@ test('learning flows from each completion automatically, retries after two cards
 
 test('learning deadlines pause with dialogs/window changes, record timeout once and stop during feedback', () => {
   const { q, click, advance, w } = setup(); click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin');
-  advance(3); const left = q('#study-total-time').textContent;
+  advance(1); const left = q('#study-total-time').textContent;
   click('#help-button'); assert.ok(q('#study-pause')); advance(100); assert.equal(q('#study-total-time').textContent, left);
   click('#close-dialog'); click('#study-resume'); advance(1); assert.equal(Number(q('#study-total-time').textContent), Number(left) - 1);
   w.dispatchEvent(new w.Event('blur')); assert.ok(q('#study-pause')); advance(100); click('#study-resume');
@@ -164,13 +164,13 @@ test('leaving during automatic feedback never advances an old round in a new scr
   click('#start-study'); assert.ok(q('.study-menu')); advance(5); assert.ok(q('.study-menu')); w.close();
 });
 
-test('learning shows length-priced dishes, changes tiers, and times out at five seconds', () => {
+test('learning shows length-priced dishes, changes tiers, and times out at three seconds', () => {
   const { q, click, advance, w } = setup(); click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin');
-  assert.equal(q('#study-dish-price').textContent, '180円'); assert.equal(q('#study-plate-time').textContent, '5.0');
+  assert.equal(q('#study-dish-price').textContent, '180円'); assert.equal(q('#study-plate-time').textContent, '3.0');
   const type = text => { for (const key of text) q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); };
   type('apple'); assert.ok(q('#study-score').textContent.includes('180'));
   type('break'); assert.equal(q('#study-dish-price').textContent, '240円');
-  advance(4.9); assert.equal(q('#study-plate-time').textContent, '0.1'); assert.ok(q('#study-plate-time').classList.contains('study-time-urgent'));
+  advance(2.9); assert.equal(q('#study-plate-time').textContent, '0.1'); assert.ok(q('#study-plate-time').classList.contains('study-time-urgent'));
   advance(.1); assert.ok(q('.study-feedback.forgot')); assert.equal(q('#study-plate-time').textContent, '0.0');
   const left = Number(q('#study-total-time').textContent); advance(.8); assert.ok(Number(q('#study-total-time').textContent) <= left);
   const saved = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')); assert.equal(saved.logs[0].price, 180); assert.equal(saved.logs[2].points, 0); w.close();

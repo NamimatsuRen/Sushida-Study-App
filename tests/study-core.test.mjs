@@ -149,7 +149,7 @@ test('dish value pays in full for new, due, extra and assisted completions, with
   assert.equal(failed.points, 0); assert.equal(failed.price, 180);
 });
 test('course times match the shared arcade definitions while dishes have strict short deadlines', () => {
-  assert.deepEqual(STUDY_DECKS.map(deck => [deck.seconds, deck.plateSeconds]), [[60, 5], [90, 6], [120, 7]]);
+  assert.deepEqual(STUDY_DECKS.map(deck => [deck.seconds, deck.plateSeconds]), [[60, 3], [90, 5], [120, 10]]);
   for (const deck of STUDY_DECKS) {
     const round = new StudyRound([entry(deck.cards[0])], {}, { seconds: deck.seconds, plateSeconds: deck.plateSeconds });
     round.advance(deck.plateSeconds - .01); assert.equal(round.phase, 'question');
