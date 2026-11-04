@@ -85,28 +85,25 @@ test('touch keyboard can complete a plate and is recorded separately; settings s
   const reloaded = setup(saved); reloaded.click('#settings-button'); assert.equal(reloaded.q('#setting-keyboard').checked, true); reloaded.w.close(); w.close();
 });
 
-test('learning: visible mask, two-error hint, completion, spaced retry and persisted assisted grade', () => {
+test('learning flows from each completion automatically, retries after two cards and preserves schedules', () => {
   const { q, click, advance, w } = setup();
   click('#start-study'); assert.equal(w.document.querySelectorAll('[data-study-deck]').length, 3);
-  click('[data-study-deck="vocabulary"]'); assert.ok(q('.study-prep').textContent.includes('apple'));
+  click('[data-study-deck="vocabulary"]'); assert.equal(q('.study-prep').open, false);
   click('#study-begin'); assert.equal(q('#study-mask').textContent, 'a____');
-  assert.equal(q('#study-feedback').textContent, ''); assert.equal(q('#study-answer').value, '');
   const type = text => { for (const key of text) { advance(.03); q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); } };
-  type('a'); type('x'); assert.equal(q('#study-mask').textContent, 'a____');
-  type('y'); assert.equal(q('#study-mask').textContent, 'ap___'); assert.equal(q('#study-answer').value, 'a');
+  type('axy'); assert.equal(q('#study-mask').textContent, 'ap___'); assert.equal(q('#study-answer').value, 'a');
   type('pple'); assert.ok(q('.study-feedback.assisted'));
   const storage = () => JSON.parse(w.localStorage.getItem('sushi-type-learning-v1'));
-  assert.equal(storage().logs[0].outcome, 'assisted');
-  const due = storage().progress['learn-word:apple'].due;
-  const clock = q('#study-total-time').textContent; advance(50); assert.equal(q('#study-total-time').textContent, clock);
-  click('#study-next'); type('break'); assert.ok(q('.study-feedback.recalled'));
-  click('#study-next'); type('decision'); click('#study-next');
-  assert.ok(q('.study-question-kind').textContent.includes('もう一度')); type('apple');
+  assert.equal(storage().logs[0].outcome, 'assisted'); const due = storage().progress['learn-word:apple'].due;
+  advance(.3); assert.equal(q('#study-mask').textContent, 'b____');
+  type('break'); assert.equal(q('#study-mask').textContent, 'd_______'); assert.equal(q('#study-feedback').textContent, '');
+  type('decision'); assert.ok(q('.study-question-kind').textContent.includes('もう一度')); type('apple');
   assert.equal(storage().progress['learn-word:apple'].due, due); assert.equal(storage().logs.at(-1).kind, 'retry');
-  click('#study-next'); assert.ok(q('.study-result')); assert.ok(q('.study-result-stats').textContent.includes('ヒントあり'));
-  click('#study-done'); assert.ok(q('.study-summary').textContent.includes('—'));
-  click('[data-study-deck="vocabulary"]'); assert.ok(q('#study-extra'));
-  const reload = setup(null, w.localStorage.getItem('sushi-type-learning-v1')); reload.click('#start-study'); reload.click('[data-study-deck="vocabulary"]'); assert.ok(reload.q('#study-extra'));
+  assert.equal(storage().logs.length, 4); assert.ok(q('.study-last-outcome').textContent.includes('apple'));
+  click('#study-stop'); click('#study-finish-now'); assert.ok(q('.study-result'));
+  assert.equal(w.document.querySelectorAll('.study-recap').length, 3);
+  click('#study-again'); assert.ok(q('#study-answer')); assert.equal(q('#study-feedback').textContent, '');
+  const reload = setup(null, w.localStorage.getItem('sushi-type-learning-v1')); reload.click('#start-study'); reload.click('[data-study-deck="vocabulary"]'); assert.ok(reload.q('#study-begin'));
   reload.w.close(); w.close();
 });
 
@@ -127,7 +124,7 @@ test('learning no-cue check is editable, has no prefix oracle, and records the a
   q('#study-answer').value = 'apl'; q('#study-answer').dispatchEvent(new w.Event('input'));
   assert.equal(q('#study-answer').value, 'apl'); assert.equal(q('#study-feedback').textContent, '');
   q('#study-answer').value = 'APPLE'; advance(.2); q('#study-answer-form').dispatchEvent(new w.Event('submit', { cancelable: true }));
-  assert.ok(q('.study-feedback.recalled')); const logs = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')).logs;
+  assert.equal(q('#study-feedback').textContent, ''); assert.ok(q('#study-answer')); const logs = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')).logs;
   assert.equal(logs[0].cue, 'none'); assert.equal(logs[0].kind, 'new'); assert.equal(logs[0].delayed, false); w.close();
 });
 
@@ -138,9 +135,24 @@ test('custom Markdown escapes HTML, blocks malformed input, and preserves progre
   q('#study-markdown').value = markdown; q('#study-markdown').dispatchEvent(new w.Event('input')); assert.equal(q('#study-preview img'), null);
   click('#study-save'); click('[data-study-deck="custom"]'); click('#study-begin'); assert.equal(q('.study-prompt-panel img'), null);
   q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
-  assert.ok(q('.study-feedback.recalled')); assert.equal(q('.study-feedback script'), null);
+  assert.equal(q('#study-feedback').textContent, ''); assert.equal(q('.study-prompt-panel script'), null);
   const original = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')).progress;
-  click('#study-next'); click('#study-done'); click('#study-import');
+  click('#study-stop'); click('#study-finish-now'); click('#study-done'); click('#study-import');
   q('#study-markdown').value = markdown.replace('alert(1)</script>', 'alert(2)</script>'); q('#study-markdown').dispatchEvent(new w.Event('input')); click('#study-save');
   assert.deepEqual(JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')).progress, original); w.close();
+});
+
+test('automatic feedback can be held or paused without skipping when the window is hidden', () => {
+  const { q, click, advance, w } = setup(); click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin');
+  const type = text => { for (const key of text) q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); };
+  type('axypple'); assert.ok(q('.study-feedback.assisted'));
+  w.dispatchEvent(new w.Event('blur')); assert.ok(q('#study-pause')); advance(10); assert.ok(q('.study-feedback.assisted'));
+  click('#study-resume'); advance(.2); assert.ok(q('.study-feedback.assisted')); advance(.1); assert.equal(q('#study-mask').textContent, 'b____');
+  click('#study-reveal'); assert.ok(q('.study-feedback.forgot')); click('#study-hold'); advance(20); assert.ok(q('.study-feedback.forgot'));
+  click('#study-next'); assert.equal(q('#study-mask').textContent, 'd_______'); w.close();
+});
+test('leaving during automatic feedback never advances an old round in a new screen', () => {
+  const { q, click, advance, w } = setup(); click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin');
+  click('#study-reveal'); click('#home-link'); assert.ok(q('.title-screen')); advance(5); assert.ok(q('.title-screen'));
+  click('#start-study'); assert.ok(q('.study-menu')); advance(5); assert.ok(q('.study-menu')); w.close();
 });

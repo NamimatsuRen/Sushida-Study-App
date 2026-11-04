@@ -55,15 +55,16 @@ test('no-cue check reveals neither length nor prefix correctness, and grades aft
   const event = round.testAnswer('APPLE.'); assert.equal(event.outcome, 'recalled'); assert.equal(event.cue, 'none');
   const wrong = new StudyRound([entry()], {}, { cueMode: 'none' }); assert.equal(wrong.testAnswer('orange').outcome, 'forgot');
 });
-test('reviews are prioritized and new cards are capped per course and per day', () => {
-  const first = planStudy(cards, {}, now); assert.equal(first.entries.length, 3);
+test('due reviews lead the queue, and fresh or early practice items are not locked by count caps', () => {
+  const first = planStudy(cards, {}, now); assert.equal(first.entries.length, 12);
   const introduced = introduceStudy({}, first.entries, now);
-  assert.equal(planStudy(cards, introduced, now).entries.filter(item => item.kind === 'new').length, 3);
   let progress = introduced;
   for (const item of first.entries) progress = recordStudy(progress, { id: item.card.id, kind: 'new', outcome: 'recalled' }, now).progress;
-  assert.equal(planStudy(cards, progress, now).entries.length, 0);
-  assert.equal(planStudy(STUDY_DECKS[1].cards, progress, now).entries.length, 3);
-  const tomorrow = planStudy(cards, progress, now + STUDY_DAY); assert.equal(tomorrow.entries[0].kind, 'review'); assert.equal(tomorrow.entries.length, 5);
+  assert.equal(planStudy(cards, progress, now).entries.length, 12);
+  assert.ok(planStudy(cards, progress, now).entries.every(item => item.kind === 'extra'));
+  assert.equal(planStudy(STUDY_DECKS[1].cards, progress, now).entries.length, 12);
+  const tomorrow = planStudy(cards, progress, now + STUDY_DAY);
+  assert.equal(tomorrow.entries[0].kind, 'review'); assert.equal(tomorrow.entries.length, 12);
 });
 test('unanswered newly introduced cards are never mistaken for delayed recalls', () => {
   const introduced = freshProgress(); const planned = planStudy(cards, introduced, now + STUDY_DAY);
@@ -117,4 +118,19 @@ test('Markdown supports aliases, Japanese answers and stable IDs across explanat
 });
 test('invalid stored schedules are filtered before any date arithmetic', () => {
   const p = freshProgress(); assert.deepEqual(validStudyProgress({ ...p, bad: { due: 'tomorrow' }, negative: { ...p[cards[0].id], stage: -1 } }), p);
+});
+
+test('continuous rounds wrap into extra practice without exhausting a five-item queue', () => {
+  const round = new StudyRound([entry(cards[0], 'new')], {}, { continuous: true });
+  for (let i = 0; i < 8; i++) { const result = typeAnswer(round); assert.equal(result.event.kind, i ? 'extra' : 'new'); round.next(); }
+  assert.equal(round.phase, 'question'); assert.equal(round.records.length, 8); assert.equal(round.lap, 9);
+});
+test('retry comes after exactly two intervening cards even in a large deck', () => {
+  const round = new StudyRound(cards.map(card => entry(card, 'new')), {}, { continuous: true });
+  round.submit('', true); round.next(); typeAnswer(round); round.next(); typeAnswer(round); round.next();
+  assert.equal(round.current.kind, 'retry'); assert.equal(round.current.card.id, cards[0].id);
+});
+test('continuous mode still finishes when its real time budget expires', () => {
+  const round = new StudyRound([entry()], {}, { continuous: true, seconds: 2 });
+  round.advance(3); round.next(); assert.equal(round.phase, 'done'); assert.equal(round.lap, 1);
 });

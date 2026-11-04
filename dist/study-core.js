@@ -1,7 +1,6 @@
 // Transparent prototype scheduler. This is not Anki's FSRS algorithm.
 export const STUDY_DAY = 86400000;
 export const STUDY_STEPS = [1, 3, 7, 14, 30, 60];
-export const STUDY_NEW_LIMIT = 3;
 export const STUDY_RELEARN = 10 * 60000;
 export const normalizeStudy = text => String(text).normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ').replace(/[.!?。！？]+$/g, '');
 export const matchesStudy = (answer, accepted) => accepted.some(value => normalizeStudy(value) === normalizeStudy(answer));
@@ -36,13 +35,12 @@ export function parseStudyMarkdown(source) {
 export function planStudy(cards, progress, now, extra = false) {
   const seen = cards.filter(card => progress[card.id]);
   const due = seen.filter(card => progress[card.id].due <= now).sort((a, b) => progress[a.id].due - progress[b.id].due);
-  const introducedToday = seen.filter(card => studyDayKey(progress[card.id].introducedAt) === studyDayKey(now)).length;
-  const budget = Math.max(0, STUDY_NEW_LIMIT - introducedToday);
   const unseen = cards.filter(card => !progress[card.id]);
-  const reviews = due.slice(0, 5).map(card => ({ card, kind: progress[card.id].attempts ? 'review' : 'new', delayed: progress[card.id].lastReviewedAt > 0 && studyDayKey(now) !== studyDayKey(progress[card.id].lastReviewedAt) && now - progress[card.id].lastReviewedAt >= 20 * 3600000 }));
-  const fresh = unseen.slice(0, Math.min(budget, 5 - reviews.length)).map(card => ({ card, kind: 'new', delayed: false }));
-  const entries = extra ? seen.slice().sort((a, b) => progress[a.id].lastReviewedAt - progress[b.id].lastReviewedAt).slice(0, 5).map(card => ({ card, kind: 'extra', delayed: false })) : [...reviews, ...fresh];
-  return { entries, dueCount: due.length, unseenCount: unseen.length, newBudget: budget, seenCount: seen.length,
+  const reviews = due.map(card => ({ card, kind: progress[card.id].attempts ? 'review' : 'new', delayed: progress[card.id].lastReviewedAt > 0 && studyDayKey(now) !== studyDayKey(progress[card.id].lastReviewedAt) && now - progress[card.id].lastReviewedAt >= 20 * 3600000 }));
+  const fresh = unseen.map(card => ({ card, kind: 'new', delayed: false }));
+  const upcoming = seen.filter(card => progress[card.id].due > now).sort((a, b) => progress[a.id].lastReviewedAt - progress[b.id].lastReviewedAt).map(card => ({ card, kind: 'extra', delayed: false }));
+  const entries = extra ? seen.map(card => ({ card, kind: 'extra', delayed: false })) : [...reviews, ...fresh, ...upcoming];
+  return { entries, dueCount: due.length, unseenCount: unseen.length, seenCount: seen.length,
     nextDue: seen.length ? Math.min(...seen.map(card => progress[card.id].due)) : null };
 }
 
@@ -87,6 +85,9 @@ export class StudyRound {
   constructor(entries, progress = {}, options = {}) {
     this.queue = entries.map(entry => ({ ...entry }));
     this.baseTotal = entries.length;
+    this.continuous = options.continuous === true;
+    this.cycleEntries = entries.map(entry => ({ ...entry, kind: 'extra', delayed: false }));
+    this.lap = 1;
     this.remaining = options.seconds || 60;
     this.plateLimit = options.plateSeconds || 25;
     this.cueMode = options.cueMode === 'none' ? 'none' : 'initial-and-length';
@@ -148,12 +149,15 @@ export class StudyRound {
     const points = outcome === 'recalled' ? kind === 'review' ? 300 : kind === 'new' ? 150 : 100 : outcome === 'assisted' ? 50 : 0;
     const event = { id: card.id, kind, delayed, cue: this.cueMode, outcome, points, addedHints: this.addedHints, misses: this.misses, timedOut };
     this.records.push(event); this.phase = 'feedback';
-    if (outcome !== 'recalled' && kind !== 'retry' && this.queue.length - this.position - 1 >= 2) this.queue.push({ ...this.current, kind: 'retry', delayed: false });
+    if (outcome !== 'recalled' && kind !== 'retry' && this.queue.length - this.position - 1 >= 2) this.queue.splice(this.position + 3, 0, { ...this.current, kind: 'retry', delayed: false });
     return event;
   }
   next() {
     if (this.phase !== 'feedback') return;
     this.position++;
+    if (this.continuous && this.remaining > 0 && this.position >= this.queue.length && this.cycleEntries.length) {
+      this.queue = this.cycleEntries.map(entry => ({ ...entry })); this.position = 0; this.lap++;
+    }
     this.phase = this.position < this.queue.length && this.remaining > 0 ? 'question' : 'done';
     this.resetQuestion();
   }
