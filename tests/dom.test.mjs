@@ -1,0 +1,21 @@
+import {JSDOM} from 'jsdom';
+import fs from 'node:fs';import assert from 'node:assert/strict';
+import {fileURLToPath} from 'node:url';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const html=fs.readFileSync(root+'dist/index.html','utf8');
+const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only',pretendToBeVisual:true});
+const w=dom.window;w.scrollTo=()=>{};w.confirm=()=>true;w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
+w.eval(fs.readFileSync(root+'dist/core.js','utf8').replace(/export /g,'')+'\n'+fs.readFileSync(root+'dist/app.js','utf8').replace(/^import[^\n]+\n/,''));
+const q=s=>w.document.querySelector(s),click=s=>{assert.ok(q(s),s);q(s).click()};
+assert.equal(w.document.querySelectorAll('.deck').length,3);
+click('#quick-start');click('#begin');
+q('#answer').value='unrecognized';q('#answer-form').dispatchEvent(new w.Event('submit',{cancelable:true}));assert.ok(q('.feedback.wrong'));
+click('#next');
+for(let i=1;i<5;i++){click('#reveal');click('#next');}
+assert.ok(q('.result'));let saved=JSON.parse(w.localStorage.getItem('oboe-sushi-v1'));assert.equal(saved.sessions.length,1);assert.equal(saved.sessions[0].correct,0);const originalDue=saved.progress['learn:0'].due;
+click('#retry');q('#answer').value='retrieval practice';q('#answer-form').dispatchEvent(new w.Event('submit',{cancelable:true}));assert.ok(q('.feedback:not(.wrong)'));saved=JSON.parse(w.localStorage.getItem('oboe-sushi-v1'));assert.equal(saved.progress['learn:0'].due,originalDue);click('#next');
+click('.brand');click('[data-view="library"]');click('#add');
+q('#markdown').value='# Unsafe <script>\n## <img src=x onerror=alert(1)>\n答え: A | Ａ\n解説: <script>alert(1)</script>';
+q('#markdown').dispatchEvent(new w.Event('input'));assert.equal(q('#save-deck').disabled,false);assert.equal(q('#preview img'),null);click('#save-deck');assert.equal(w.document.querySelectorAll('.library-card').length,4);assert.equal(q('main img'),null);
+click('[data-view="home"]');const ds=w.document.querySelectorAll('[data-start]');ds[3].click();click('#begin');const before=JSON.parse(w.localStorage.getItem('oboe-sushi-v1'));q('#answer').value='Ａ';q('#answer').dispatchEvent(new w.Event('compositionstart'));q('#answer-form').dispatchEvent(new w.Event('submit',{cancelable:true}));assert.equal(q('#feedback').textContent,'');q('#answer').dispatchEvent(new w.Event('compositionend'));q('#answer-form').dispatchEvent(new w.Event('submit',{cancelable:true}));assert.ok(q('.feedback:not(.wrong)'));click('#next');assert.ok(q('.result'));click('#home');click('[data-view="research"]');assert.equal(w.document.querySelectorAll('.research article').length,4);
+w.close();console.log('DOM smoke passed: session, feedback, retry due preservation, Markdown import/XSS escaping, IME composition, width normalization, navigation.');
