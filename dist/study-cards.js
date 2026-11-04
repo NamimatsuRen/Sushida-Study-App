@@ -1,3 +1,4 @@
+import { COURSES } from './core.js';
 const learningRows = [
   ['apple', 'りんご', 'eat an apple', 'りんごを食べる', 'i eat an apple every morning', '私は毎朝りんごを食べます。', 'apple の前は an。単語だけでなく eat an apple というまとまりでも覚えましょう。'],
   ['break', '休憩', 'take a break', '休憩する', 'let us take a break', '少し休憩しましょう（Let usで始める）。', '「休憩する」は take a break。do a break とはしません。'],
@@ -13,10 +14,10 @@ const learningRows = [
   ['mistake', '間違い・ミス', 'make a mistake', '間違える', 'everyone can make a mistake', '誰でも間違えることがあります。', 'make a mistake で「間違える」。everyone は単数扱いです。'],
 ];
 export const STUDY_DECKS = [
-  { id: 'vocabulary', title: 'お手軽コース', label: '単語を覚える', description: '日本語から、ひとつの英単語へ。', sushi: 'shrimp', seconds: 60, plateSeconds: 25,
+  { id: 'vocabulary', title: 'お手軽コース', label: '単語を覚える', description: '日本語から、ひとつの英単語へ。', sushi: 'shrimp', seconds: COURSES.easy.seconds, price: COURSES.easy.price, plateSeconds: 5,
     cards: learningRows.map(([word, meaning, phrase, phraseMeaning, sentence, translation, explanation]) => ({ id: `learn-word:${word}`, direction: 'ja-en-word', prompt: `「${meaning}」を英語で。`, answers: word === 'photo' ? ['photo', 'picture'] : word === 'mistake' ? ['mistake', 'error'] : word === 'break' ? ['break', 'rest'] : [word], example: `${phrase} — ${phraseMeaning}`, explanation })) },
-  { id: 'expressions', title: 'お勧めコース', label: '熟語・短い組み合わせ', description: 'take a break のような、短いまとまりへ。', sushi: 'tuna', seconds: 90, plateSeconds: 35,
+  { id: 'expressions', title: 'お勧めコース', label: '熟語・短い組み合わせ', description: 'take a break のような、短いまとまりへ。', sushi: 'tuna', seconds: COURSES.normal.seconds, price: COURSES.normal.price, plateSeconds: 6,
     cards: learningRows.map(([word, meaning, phrase, phraseMeaning, sentence, translation, explanation]) => ({ id: `learn-phrase:${word}`, direction: 'ja-en-collocation', prompt: `「${phraseMeaning}」を英語のまとまりで。`, answers: [phrase], example: sentence + '.', explanation })) },
-  { id: 'sentences', title: '高級コース', label: '例文・文章で使う', description: '覚えたまとまりを、文の形で取り出す。', sushi: 'salmon', seconds: 120, plateSeconds: 50,
+  { id: 'sentences', title: '高級コース', label: '例文・文章で使う', description: '覚えたまとまりを、文の形で取り出す。', sushi: 'salmon', seconds: COURSES.hard.seconds, price: COURSES.hard.price, plateSeconds: 7,
     cards: learningRows.map(([word, meaning, phrase, phraseMeaning, sentence, translation, explanation]) => ({ id: `learn-sentence:${word}`, direction: 'ja-en-sentence', prompt: translation, answers: [sentence], example: sentence + '.', explanation })) },
 ];

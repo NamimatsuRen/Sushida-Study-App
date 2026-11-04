@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { StudyRound, planStudy, introduceStudy, recordStudy, delayedStudyStats, parseStudyMarkdown, matchesStudy, STUDY_DAY, STUDY_RELEARN, validStudyProgress } from '../dist/study-core.js';
+import { StudyRound, planStudy, introduceStudy, recordStudy, delayedStudyStats, parseStudyMarkdown, matchesStudy, STUDY_DAY, STUDY_RELEARN, validStudyProgress, studyPlateValue } from '../dist/study-core.js';
 import { STUDY_DECKS } from '../dist/study-cards.js';
 const now = new Date('2026-11-05T10:00:00Z').getTime();
 const cards = STUDY_DECKS[0].cards;
@@ -31,11 +31,11 @@ test('miss counter resets after a correct letter; baseline letter is not an adde
 });
 test('letter hints remain assisted even when the eventual answer is correct', () => {
   const round = new StudyRound([entry()]); assert.equal(round.hint(), 'ap___');
-  const result = typeAnswer(round); assert.equal(result.event.outcome, 'assisted'); assert.equal(result.event.points, 50);
+  const result = typeAnswer(round); assert.equal(result.event.outcome, 'assisted'); assert.equal(result.event.points, 180);
 });
 test('completion is automatic, one event per item, and an early Enter does not count as recall', () => {
   const round = new StudyRound([entry()]); assert.equal(round.submit('ap'), null);
-  const result = typeAnswer(round); assert.equal(result.event.outcome, 'recalled'); assert.equal(result.event.points, 300);
+  const result = typeAnswer(round); assert.equal(result.event.outcome, 'recalled'); assert.equal(result.event.points, 180);
   assert.equal(round.submit('apple'), null); assert.equal(round.records.length, 1);
 });
 test('deadline, feedback and pause have distinct timing behavior', () => {
@@ -133,4 +133,37 @@ test('retry comes after exactly two intervening cards even in a large deck', () 
 test('continuous mode still finishes when its real time budget expires', () => {
   const round = new StudyRound([entry()], {}, { continuous: true, seconds: 2 });
   round.advance(3); round.next(); assert.equal(round.phase, 'done'); assert.equal(round.lap, 1);
+});
+
+test('prices rise at clear English-length boundaries, including spaces', () => {
+  for (const [length, price] of [[4, 100], [5, 180], [7, 180], [8, 240], [14, 240], [15, 380], [24, 380], [25, 500], [100, 500]]) assert.equal(studyPlateValue('a'.repeat(length)), price);
+  assert.equal(studyPlateValue('eat an apple'), 240);
+  assert.equal(studyPlateValue(' ＡＰＰＬＥ. '), 180);
+});
+test('dish value pays in full for new, due, extra and assisted completions, with zero for a timeout', () => {
+  for (const kind of ['new', 'review', 'extra', 'retry']) {
+    const round = new StudyRound([entry(cards[0], kind)]); round.hint();
+    const event = typeAnswer(round).event; assert.equal(event.points, 180); assert.equal(event.price, 180); assert.equal(event.outcome, 'assisted');
+  }
+  const round = new StudyRound([entry()], {}, { plateSeconds: 5 }); const failed = round.advance(5);
+  assert.equal(failed.points, 0); assert.equal(failed.price, 180);
+});
+test('course times match the shared arcade definitions while dishes have strict short deadlines', () => {
+  assert.deepEqual(STUDY_DECKS.map(deck => [deck.seconds, deck.plateSeconds]), [[60, 5], [90, 6], [120, 7]]);
+  for (const deck of STUDY_DECKS) {
+    const round = new StudyRound([entry(deck.cards[0])], {}, { seconds: deck.seconds, plateSeconds: deck.plateSeconds });
+    round.advance(deck.plateSeconds - .01); assert.equal(round.phase, 'question');
+    assert.equal(round.advance(.01).timedOut, true);
+  }
+});
+test('automatic feedback uses the course budget without creating phantom failed cards', () => {
+  const round = new StudyRound([entry(), entry(cards[1])], {}, { seconds: 1, plateSeconds: 5, continuous: true });
+  round.submit('', true); round.advanceFeedback(.4); assert.ok(Math.abs(round.remaining - .6) < 1e-9);
+  round.paused = true; round.advanceFeedback(5); assert.ok(Math.abs(round.remaining - .6) < 1e-9);
+  round.paused = false; round.advanceFeedback(2); assert.equal(round.remaining, 0);
+  round.next(); assert.equal(round.phase, 'done'); assert.equal(round.records.length, 1);
+});
+test('registered aliases use the completed spelling length for payout', () => {
+  const round = new StudyRound([entry(cards[1])]); assert.equal(round.value, 180);
+  const event = round.submit('rest'); assert.equal(event.price, 100); assert.equal(event.characters, 4); assert.equal(event.points, 100);
 });

@@ -33,22 +33,24 @@ function persist() {
   catch { storageAvailable = false; toast('記録を保存できません。ブラウザのストレージ設定を確認してください。'); }
 }
 function initAudio() {
-  if (!settings.sound) return;
+  if (!settings.sound) return Promise.resolve();
   try {
     const Context = window.AudioContext || window.webkitAudioContext;
-    if (!Context) return;
+    if (!Context) return Promise.resolve();
     if (!audio) audio = new Context();
-    if (audio.state === 'suspended') audio.resume().catch(() => {});
+    if (audio.state === 'suspended') return audio.resume().catch(() => {});
   } catch { /* Sound is optional. */ }
+  return Promise.resolve();
 }
 function sound(kind) {
   if (!settings.sound || !audio || audio.state !== 'running') return;
   try {
     const oscillator = audio.createOscillator(), gain = audio.createGain();
-    oscillator.type = kind === 'miss' ? 'sawtooth' : 'sine';
-    const duration = kind === 'key' ? 0.035 : 0.16;
-    const frequency = { key: 920, miss: 125, plate: 1350, bonus: 1760, start: 700 }[kind] || 700;
+    oscillator.type = kind === 'miss' ? 'sawtooth' : kind === 'click' ? 'triangle' : 'sine';
+    const duration = kind === 'click' ? 0.045 : kind === 'key' ? 0.035 : 0.16;
+    const frequency = { click: 1700, key: 920, miss: 125, plate: 1350, bonus: 1760, start: 700 }[kind] || 700;
     oscillator.frequency.setValueAtTime(frequency, audio.currentTime);
+    if (kind === 'click') oscillator.frequency.exponentialRampToValueAtTime(450, audio.currentTime + duration);
     if (kind === 'plate' || kind === 'bonus') oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.5, audio.currentTime + duration);
     gain.gain.setValueAtTime(kind === 'key' ? 0.018 : 0.035, audio.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + duration);
@@ -302,4 +304,10 @@ function frame(now) {
   if (phase === 'playing') { syncTime(now); if (phase === 'playing') draw(); }
   requestAnimationFrame(frame);
 }
+// Capture dynamic menu buttons once; touch keys already have their own sound.
+document.addEventListener('click', event => {
+  const button = event.target.closest?.('button');
+  if (!button || button.disabled || button.id === 'sound-toggle' || button.hasAttribute('data-key') || !settings.sound) return;
+  initAudio().then(() => sound('click'));
+}, true);
 updateSoundStatus(); title(); requestAnimationFrame(frame);

@@ -545,3 +545,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .study-recap p { font-size: 12px; line-height: 1.9; color: #92784e; }
 .study-recap small { font-size: 10px; color: #a68c62; }
 .study-prep > summary { cursor: pointer; font-size: 12px; color: #997e50; padding: 12px 0; }
+.study-dish-price { position: absolute; left: 0; right: 0; bottom: 15px; text-align: center; color: #4a3820; font: 700 15px Georgia, serif; text-shadow: 0 1px #ffefc6; }
+.study-price-guide { max-width: 650px; margin: 22px auto; color: #957c53; font-size: 10px; text-align: center; line-height: 1.9; }
+.study-clock b.study-time-urgent { color: #dc3025; background: #d34c2a15; border-radius: 3px; padding: 0 3px; }

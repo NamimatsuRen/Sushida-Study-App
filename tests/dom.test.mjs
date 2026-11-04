@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 const root = fileURLToPath(new URL('../', import.meta.url));
 
-function setup(saved = null, learningSaved = null) {
+function setup(saved = null, learningSaved = null, mockAudio = false) {
   const dom = new JSDOM(readFileSync(root + 'dist/index.html', 'utf8'), { url: 'https://example.test', runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window;
   let now = 0, raf, intervalId = 0;
@@ -17,6 +17,13 @@ function setup(saved = null, learningSaved = null) {
   w.setInterval = callback => { intervals.set(++intervalId, callback); return intervalId; };
   w.clearInterval = id => intervals.delete(id);
   w.setTimeout = () => 1; w.clearTimeout = () => {};
+  const audioEvents = [];
+  if (mockAudio) w.AudioContext = class {
+    constructor() { this.state = 'suspended'; this.currentTime = 0; this.destination = {}; }
+    resume() { this.state = 'running'; return Promise.resolve(); }
+    createOscillator() { const item = { frequency: { setValueAtTime: value => item.hz = value, exponentialRampToValueAtTime() {} }, connect() {}, start() { audioEvents.push(item.hz); }, stop() {} }; return item; }
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+  };
   w.confirm = () => true;
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; };
@@ -29,7 +36,7 @@ function setup(saved = null, learningSaved = null) {
   const advance = seconds => { now += seconds * 1000; raf(now); };
   const countDown = () => { for (let i = 0; i < 3; i++) { now += 1000; for (const callback of [...intervals.values()]) callback(); } };
   const phrase = () => q('#english-prompt').textContent.replace('␣', ' ');
-  return { w, dom, q, click, key, advance, countDown, phrase };
+  return { w, dom, q, click, key, advance, countDown, phrase, audioEvents };
 }
 
 test('title -> course -> real-time character input -> result -> saved record -> replay', () => {
@@ -155,4 +162,26 @@ test('leaving during automatic feedback never advances an old round in a new scr
   const { q, click, advance, w } = setup(); click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin');
   click('#study-reveal'); click('#home-link'); assert.ok(q('.title-screen')); advance(5); assert.ok(q('.title-screen'));
   click('#start-study'); assert.ok(q('.study-menu')); advance(5); assert.ok(q('.study-menu')); w.close();
+});
+
+test('learning shows length-priced dishes, changes tiers, and times out at five seconds', () => {
+  const { q, click, advance, w } = setup(); click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin');
+  assert.equal(q('#study-dish-price').textContent, '180円'); assert.equal(q('#study-plate-time').textContent, '5.0');
+  const type = text => { for (const key of text) q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); };
+  type('apple'); assert.ok(q('#study-score').textContent.includes('180'));
+  type('break'); assert.equal(q('#study-dish-price').textContent, '240円');
+  advance(4.9); assert.equal(q('#study-plate-time').textContent, '0.1'); assert.ok(q('#study-plate-time').classList.contains('study-time-urgent'));
+  advance(.1); assert.ok(q('.study-feedback.forgot')); assert.equal(q('#study-plate-time').textContent, '0.0');
+  const left = Number(q('#study-total-time').textContent); advance(.8); assert.ok(Number(q('#study-total-time').textContent) <= left);
+  const saved = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')); assert.equal(saved.logs[0].price, 180); assert.equal(saved.logs[2].points, 0); w.close();
+});
+test('no-cue checks do not leak answer length through a dish price badge', () => {
+  const { q, click, w } = setup(); click('#start-study'); click('[data-study-deck="vocabulary"]'); q('#study-probe').checked = true; click('#study-begin');
+  assert.equal(q('#study-dish-price').textContent, '完答で加算'); assert.equal(q('.study-plate .sushi-art').dataset.value, ''); w.close();
+});
+test('menu click sound works on the first gesture and dynamic buttons, and respects sound off', async () => {
+  const { click, audioEvents, w } = setup(null, null, true);
+  click('#start-study'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 1);
+  click('[data-study-deck="vocabulary"]'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 2);
+  click('#sound-toggle'); click('#study-back'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 2); w.close();
 });

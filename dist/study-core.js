@@ -6,6 +6,13 @@ export const normalizeStudy = text => String(text).normalize('NFKC').toLowerCase
 export const matchesStudy = (answer, accepted) => accepted.some(value => normalizeStudy(value) === normalizeStudy(answer));
 export const studyDayKey = now => new Date(now).toLocaleDateString('sv-SE');
 
+// English input length, including spaces. Prices are fixed per completed answer.
+export const STUDY_PRICES = [100, 180, 240, 380, 500];
+export function studyPlateValue(answer) {
+  const length = [...normalizeStudy(answer)].length;
+  return length <= 4 ? 100 : length <= 7 ? 180 : length <= 14 ? 240 : length <= 24 ? 380 : 500;
+}
+
 export function studyCardId(prompt, answers) {
   const text = JSON.stringify([prompt.trim(), answers.map(normalizeStudy)]);
   let hash = 2166136261;
@@ -89,7 +96,7 @@ export class StudyRound {
     this.cycleEntries = entries.map(entry => ({ ...entry, kind: 'extra', delayed: false }));
     this.lap = 1;
     this.remaining = options.seconds || 60;
-    this.plateLimit = options.plateSeconds || 25;
+    this.plateLimit = options.plateSeconds || 6;
     this.cueMode = options.cueMode === 'none' ? 'none' : 'initial-and-length';
     this.position = 0; this.records = []; this.phase = entries.length ? 'question' : 'done';
     this.paused = false;
@@ -102,6 +109,7 @@ export class StudyRound {
     this.guide = this.current?.card.answers[0] || '';
     this.revealed = new Set(this.cueMode === 'none' ? [] : [0]);
   }
+  get value() { return studyPlateValue(this.guide); }
   get mask() {
     if (this.cueMode === 'none') return '';
     return [...this.guide].map((char, i) => i < this.typed.length || this.revealed.has(i) || char === ' ' ? char : '_').join('');
@@ -138,6 +146,10 @@ export class StudyRound {
     }
     return null;
   }
+  advanceFeedback(seconds) {
+    if (this.phase !== 'feedback' || this.paused || !Number.isFinite(seconds) || seconds <= 0) return;
+    this.remaining = Math.max(0, this.remaining - seconds);
+  }
   testAnswer(answer) {
     if (this.cueMode !== 'none' || !answer.trim()) return null;
     return this.submit(answer, !matchesStudy(answer, this.current.card.answers));
@@ -146,8 +158,11 @@ export class StudyRound {
     if (this.phase !== 'question' || this.paused || (!reveal && !matchesStudy(answer, this.current.card.answers))) return null;
     const { card, kind, delayed } = this.current;
     const outcome = reveal ? 'forgot' : this.assisted ? 'assisted' : 'recalled';
-    const points = outcome === 'recalled' ? kind === 'review' ? 300 : kind === 'new' ? 150 : 100 : outcome === 'assisted' ? 50 : 0;
-    const event = { id: card.id, kind, delayed, cue: this.cueMode, outcome, points, addedHints: this.addedHints, misses: this.misses, timedOut };
+    const accepted = reveal ? this.guide : card.answers.find(value => matchesStudy(answer, [value]));
+    const price = studyPlateValue(accepted);
+    const characters = [...normalizeStudy(accepted)].length;
+    const points = outcome === 'forgot' ? 0 : price;
+    const event = { id: card.id, kind, delayed, cue: this.cueMode, outcome, points, price, characters, addedHints: this.addedHints, misses: this.misses, timedOut };
     this.records.push(event); this.phase = 'feedback';
     if (outcome !== 'recalled' && kind !== 'retry' && this.queue.length - this.position - 1 >= 2) this.queue.splice(this.position + 3, 0, { ...this.current, kind: 'retry', delayed: false });
     return event;
