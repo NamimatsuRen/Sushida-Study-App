@@ -1,3 +1,4 @@
+import { createStudyUI } from './study.js';
 import { COURSES, MODES, PRICES, TYPES, BONUS_EVERY, TypingGame, yen } from './core.js';
 import { PHRASES } from './phrases.js';
 import { sushi } from './sushi.js';
@@ -19,6 +20,7 @@ let phase = 'title', mode = 'normal', course = 'easy', game = null;
 let lastTick = 0, countdownTimer = null, displayedPhrase = null, audio = null, touchUsed = false;
 let renderedIndex = -1, renderedTranslation = null;
 let toastTimer;
+const studyUI = createStudyUI({ screen, escape, sushi, sound, showTitle: title, toast });
 
 function toast(message) {
   clearTimeout(toastTimer);
@@ -64,11 +66,12 @@ function title() {
   screen.className = 'screen title-screen';
   screen.innerHTML = `
     <div class="noren"><i></i><i></i><i></i><i></i><i></i><span>いらっしゃいませ</span></div>
-    <div class="title-heading"><p class="edition">THE ENGLISH TYPING CHALLENGE</p><h1>寿司<span>タイプ</span><b>ENGLISH</b></h1><p class="title-tagline">英語で、元を取れ。</p></div>
+    <div class="title-heading"><p class="edition">THE ENGLISH TYPING CHALLENGE</p><h1>寿司<span>タイプ</span><b>ENGLISH</b></h1><p class="title-tagline">思い出すほど、身につく。</p></div>
     <div class="title-sushi"><div class="hero-side">${sushi('shrimp', 2)}</div><div class="hero-center">${sushi('tuna', 3)}</div><div class="hero-side right">${sushi('salmon', 4)}</div></div>
-    <button id="start-menu" class="red-button title-start">スタート <small>START</small><span>▶</span></button>
-    <p class="start-hint">スペースキー / Enterキーでもスタート</p>
-    <div class="title-bottom"><span>流れるお皿の英文をタイプ！</span><span>たくさん食べて、目指せ黒字。</span></div>`;
+    <button id="start-study" class="red-button title-start">学んで遊ぶ <small>LEARN</small><span>▶</span></button><button id="start-menu" class="plain-button arcade-entry">タイピングだけで遊ぶ →</button>
+    <p class="start-hint">単語 → 熟語 → 例文。頭文字を頼りに思い出そう。</p>
+    <div class="title-bottom"><span>手助けを使っても、次の復習につなげよう。</span></div>`;
+  $('#start-study').onclick = () => { initAudio(); phase = 'study'; studyUI.open(); };
   $('#start-menu').onclick = () => { initAudio(); menu(); };
 }
 function menu() {
@@ -237,6 +240,7 @@ function finish() {
   };
 }
 function openDialog(title, html) {
+  if (phase === 'study') studyUI.pause();
   if (phase === 'playing') pause();
   if (phase === 'countdown') ready();
   $('#dialog-title').textContent = title;
@@ -244,7 +248,7 @@ function openDialog(title, html) {
   if (!$('#dialog').open) $('#dialog').showModal();
 }
 $('#help-button').onclick = () => openDialog('遊び方', `
-  <p class="dialog-lead">お寿司が流れきる前に、英文をタイプ！</p>
+  <p class="dialog-lead">学習モードは、頭文字と空欄から思い出してタイプ。</p><p class="small-note">お手軽＝単語・お勧め＝短い組み合わせ・高級＝例文。同じ位置で2回ミスすると1文字表示されます。制限時間は答え合わせ中に止まり、追加ヒントや時間切れの問題は短い間隔で復習します。以下は「タイピングだけで遊ぶ」のルールです。</p>
   <ol class="help-list"><li><b>コースと難易度を選ぶ</b><p>3,000円・5,000円・10,000円の3コース。金額はゲームの目標です。</p></li><li><b>表示された英語を、そのまま入力</b><p>半角英数で1文字ずつ。大文字・小文字はどちらでもOK。単語の間はスペースを打ちます。Enterでの送信やBackspaceでの修正は不要です。</p></li><li><b>打ち切って、お皿をゲット</b><p>流れてしまうとそのお皿の得点は入りません。30文字連続でミスなく打つと、残り時間が2秒増えます。</p></li><li><b>目指せ、元取り！</b><p>食べたお皿の合計 − コース金額がお得になった金額です。結果ではキータイプ数やミスも確認できます。</p></li></ol>
   <div class="help-modes">${Object.values(MODES).map(value => `<p><b>${value.name}</b><span>${value.description}</span></p>`).join('')}</div><p class="small-note">Escで一時停止。タブやウィンドウを離れたときも自動停止します。スマホでは設定から画面キーボードをONにしてください。</p>`);
 $('#settings-button').onclick = () => {
@@ -259,11 +263,13 @@ $('#history-button').onclick = () => openDialog('これまでの記録', history
 $('#close-dialog').onclick = () => $('#dialog').close();
 $('#home-link').onclick = event => {
   event.preventDefault();
+  if (phase === 'study' && !studyUI.leave()) return;
   if (phase === 'playing') pause();
   if (game && ['paused', 'countdown'].includes(phase) && !confirm('タイトルへ戻りますか？今回のプレイは終了します。')) return;
   title();
 };
 document.addEventListener('keydown', event => {
+  if (phase === 'study') { if (!$('#dialog').open) studyUI.handleKey(event); return; }
   if ($('#dialog').open || event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
   if (event.isComposing || event.keyCode === 229) {
     if (phase === 'playing') pause('ime');
@@ -278,19 +284,21 @@ document.addEventListener('keydown', event => {
   if (!['playing', 'paused'].includes(phase) && event.target.closest?.('button, a, input')) return;
   if ([' ', 'Enter'].includes(event.key) && ['title', 'ready', 'result'].includes(phase)) {
     event.preventDefault(); initAudio();
-    if (phase === 'title') menu(); else if (phase === 'ready') startCountdown(); else ready();
+    if (phase === 'title') { phase = 'study'; studyUI.open(); } else if (phase === 'ready') startCountdown(); else ready();
     return;
   }
   if (phase === 'playing' && event.key.length === 1) { event.preventDefault(); typeKey(event.key); }
 });
 document.addEventListener('compositionstart', () => { if (phase === 'playing') pause('ime'); });
 function onLeave() {
+  if (phase === 'study') { studyUI.pause(); return; }
   if (phase === 'playing') pause();
   else if (phase === 'countdown') ready();
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) onLeave(); });
 window.addEventListener('blur', onLeave);
 function frame(now) {
+  if (phase === 'study') studyUI.frame(now);
   if (phase === 'playing') { syncTime(now); if (phase === 'playing') draw(); }
   requestAnimationFrame(frame);
 }
