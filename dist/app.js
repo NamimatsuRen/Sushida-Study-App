@@ -1,3 +1,4 @@
+import { SushiSound } from './sound.js';
 import { createStudyUI } from './study.js';
 import { COURSES, MODES, PRICES, TYPES, BONUS_EVERY, TypingGame, yen } from './core.js';
 import { PHRASES } from './phrases.js';
@@ -6,20 +7,22 @@ import { sushi } from './sushi.js';
 const $ = selector => document.querySelector(selector);
 const escape = text => String(text).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const screen = $('#screen');
-const defaults = { sound: true, translation: true, keyboard: false };
+const defaults = { sound: true, volume: .35, translation: true, keyboard: false };
 let settings = { ...defaults }, history = [], bests = {}, storageAvailable = true;
 try {
   const saved = JSON.parse(localStorage.getItem('sushi-type-english-v2') || 'null');
   if (saved) {
-    for (const key of Object.keys(defaults)) if (typeof saved.settings?.[key] === 'boolean') settings[key] = saved.settings[key];
+    for (const key of ['sound', 'translation', 'keyboard']) if (typeof saved.settings?.[key] === 'boolean') settings[key] = saved.settings[key];
+    if (typeof saved.settings?.volume === 'number' && Number.isFinite(saved.settings.volume)) settings.volume = Math.max(0, Math.min(1, saved.settings.volume));
     if (Array.isArray(saved.history)) history = saved.history.filter(row => COURSES[row.course] && MODES[row.mode] && Number.isFinite(row.score)).slice(0, 50);
     if (saved.bests && typeof saved.bests === 'object') bests = saved.bests;
   }
 } catch { storageAvailable = false; }
 let phase = 'title', mode = 'normal', course = 'easy', game = null;
-let lastTick = 0, countdownTimer = null, displayedPhrase = null, audio = null, touchUsed = false;
+let lastTick = 0, countdownTimer = null, displayedPhrase = null, touchUsed = false;
 let renderedIndex = -1, renderedTranslation = null;
 let toastTimer;
+const soundFX = new SushiSound({ enabled: () => settings.sound, volume: () => settings.volume });
 const studyUI = createStudyUI({ screen, escape, sushi, sound, showTitle: title, toast });
 
 function toast(message) {
@@ -32,35 +35,16 @@ function persist() {
   try { localStorage.setItem('sushi-type-english-v2', JSON.stringify({ settings, history, bests })); }
   catch { storageAvailable = false; toast('記録を保存できません。ブラウザのストレージ設定を確認してください。'); }
 }
-function initAudio() {
-  if (!settings.sound) return Promise.resolve();
-  try {
-    const Context = window.AudioContext || window.webkitAudioContext;
-    if (!Context) return Promise.resolve();
-    if (!audio) audio = new Context();
-    if (audio.state === 'suspended') return audio.resume().catch(() => {});
-  } catch { /* Sound is optional. */ }
-  return Promise.resolve();
-}
-function sound(kind) {
-  if (!settings.sound || !audio || audio.state !== 'running') return;
-  try {
-    const oscillator = audio.createOscillator(), gain = audio.createGain();
-    oscillator.type = kind === 'miss' ? 'sawtooth' : kind === 'click' ? 'triangle' : 'sine';
-    const duration = kind === 'click' ? 0.045 : kind === 'key' ? 0.035 : 0.16;
-    const frequency = { click: 1700, key: 920, miss: 125, plate: 1350, bonus: 1760, start: 700 }[kind] || 700;
-    oscillator.frequency.setValueAtTime(frequency, audio.currentTime);
-    if (kind === 'click') oscillator.frequency.exponentialRampToValueAtTime(450, audio.currentTime + duration);
-    if (kind === 'plate' || kind === 'bonus') oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.5, audio.currentTime + duration);
-    gain.gain.setValueAtTime(kind === 'key' ? 0.018 : 0.035, audio.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + duration);
-    oscillator.connect(gain); gain.connect(audio.destination);
-    oscillator.start(); oscillator.stop(audio.currentTime + duration);
-  } catch { /* Browsers without audio still play normally. */ }
+function initAudio() { return soundFX.init(); }
+function sound(kind) { return soundFX.play(kind); }
+function syncSound() {
+  if (!settings.sound || settings.volume === 0) soundFX.stop();
+  soundFX.updateVolume();
+  document.querySelectorAll('[data-sound-preview]').forEach(button => { button.disabled = !settings.sound || settings.volume === 0; });
 }
 function updateSoundStatus() {
   $('#sound-status').innerHTML = `<button id="sound-toggle" aria-pressed="${settings.sound}">${settings.sound ? '♪ SOUND ON' : '♪ SOUND OFF'}</button>`;
-  $('#sound-toggle').onclick = () => { settings.sound = !settings.sound; initAudio(); persist(); updateSoundStatus(); };
+  $('#sound-toggle').onclick = () => { settings.sound = !settings.sound; syncSound(); initAudio(); persist(); updateSoundStatus(); };
 }
 function cancelCountdown() { clearInterval(countdownTimer); countdownTimer = null; }
 function title() {
@@ -218,6 +202,7 @@ function resume() {
 function finish() {
   if (phase === 'result') return;
   phase = 'result'; cancelCountdown();
+  if (game.correct > 0) sound('finish');
   const result = { ...game.result(), at: Date.now(), touch: touchUsed };
   const bestKey = `${course}:${mode}:${touchUsed ? 'touch' : 'keyboard'}`;
   const eligible = result.reason !== 'exit' && result.correct > 0;
@@ -250,16 +235,23 @@ function openDialog(title, html) {
   if (!$('#dialog').open) $('#dialog').showModal();
 }
 $('#help-button').onclick = () => openDialog('遊び方', `
-  <p class="dialog-lead">学習モードは、頭文字と空欄から思い出してタイプ。</p><p class="small-note">お手軽＝単語・お勧め＝短い組み合わせ・高級＝例文。同じ位置で2回ミスすると1文字表示されます。制限時間は答え合わせ中に止まり、追加ヒントや時間切れの問題は短い間隔で復習します。以下は「タイピングだけで遊ぶ」のルールです。</p>
+  <p class="dialog-lead">学習モードは、頭文字と空欄から思い出してタイプ。</p><p class="small-note">お手軽＝単語・お勧め＝短い組み合わせ・高級＝例文。同じ位置で2回ミスすると1文字表示されます。正解で即次へ。自動の答え表示中もコース時計が進み、保留・一時停止中は止まります。追加ヒントなしで3皿続けると音とゲージでお祝い。追加ヒントや時間切れの問題は短い間隔で復習します。以下は「タイピングだけで遊ぶ」のルールです。</p>
   <ol class="help-list"><li><b>コースと難易度を選ぶ</b><p>3,000円・5,000円・10,000円の3コース。金額はゲームの目標です。</p></li><li><b>表示された英語を、そのまま入力</b><p>半角英数で1文字ずつ。大文字・小文字はどちらでもOK。単語の間はスペースを打ちます。Enterでの送信やBackspaceでの修正は不要です。</p></li><li><b>打ち切って、お皿をゲット</b><p>流れてしまうとそのお皿の得点は入りません。30文字連続でミスなく打つと、残り時間が2秒増えます。</p></li><li><b>目指せ、元取り！</b><p>食べたお皿の合計 − コース金額がお得になった金額です。結果ではキータイプ数やミスも確認できます。</p></li></ol>
   <div class="help-modes">${Object.values(MODES).map(value => `<p><b>${value.name}</b><span>${value.description}</span></p>`).join('')}</div><p class="small-note">Escで一時停止。タブやウィンドウを離れたときも自動停止します。スマホでは設定から画面キーボードをONにしてください。</p>`);
 $('#settings-button').onclick = () => {
-  openDialog('設定', `<div class="settings-list"><label><span><b>サウンド</b><small>打鍵音・ミス音・お皿を取った音</small></span><input type="checkbox" id="setting-sound" ${settings.sound ? 'checked' : ''}></label><label><span><b>日本語の意味を表示</b><small>英文の上に日本語を表示します</small></span><input type="checkbox" id="setting-translation" ${settings.translation ? 'checked' : ''}></label><label><span><b>画面キーボード</b><small>スマホ・タブレットでタップして遊べます</small></span><input type="checkbox" id="setting-keyboard" ${settings.keyboard ? 'checked' : ''}></label></div><p class="small-note">設定はこのブラウザに保存されます。以前の暗記版データは変更しません。</p>`);
-  for (const key of Object.keys(defaults)) $(`#setting-${key}`).onchange = event => {
-    settings[key] = event.target.checked; persist(); updateSoundStatus(); initAudio();
+  openDialog('設定', `<div class="settings-list"><label><span><b>サウンド</b><small>打鍵・ミス・完答・連続完答で音が変わります</small></span><input type="checkbox" id="setting-sound" ${settings.sound ? 'checked' : ''}></label><label class="sound-volume-label" for="setting-volume"><span><b>音量 <output id="sound-volume-value">${Math.round(settings.volume * 100)}%</output></b><small>ボタン音・効果音すべてに適用</small></span><input type="range" id="setting-volume" min="0" max="100" step="5" value="${Math.round(settings.volume * 100)}"></label><div class="sound-preview"><span>音を試す</span><div>${[['click', 'ボタン'], ['key', '打鍵'], ['miss', 'ミス'], ['hint', '文字ヒント'], ['plate', '完答'], ['promote', '連続完答'], ['demote', '学び直し'], ['finish', '終了']].map(([kind, label]) => `<button class="wood-button" data-sound-preview="${kind}">${label}</button>`).join('')}</div></div><label><span><b>日本語の意味を表示</b><small>タイピングモードの英文の上に日本語を表示します</small></span><input type="checkbox" id="setting-translation" ${settings.translation ? 'checked' : ''}></label><label><span><b>画面キーボード</b><small>タイピングモードでタップして遊べます</small></span><input type="checkbox" id="setting-keyboard" ${settings.keyboard ? 'checked' : ''}></label></div><p class="small-note">音量・表示設定はこのブラウザに保存されます。</p>`);
+  for (const key of ['sound', 'translation', 'keyboard']) $(`#setting-${key}`).onchange = event => {
+    settings[key] = event.target.checked; persist(); syncSound(); updateSoundStatus(); initAudio();
     if ($('#virtual-keyboard')) $('#virtual-keyboard').hidden = !settings.keyboard;
     draw();
   };
+  $('#setting-volume').oninput = event => {
+    settings.volume = Number(event.target.value) / 100;
+    $('#sound-volume-value').textContent = `${Math.round(settings.volume * 100)}%`;
+    syncSound(); persist();
+  };
+  document.querySelectorAll('[data-sound-preview]').forEach(button => button.onclick = () => sound(button.dataset.soundPreview));
+  syncSound();
 };
 $('#history-button').onclick = () => {
   if (phase === 'study') studyUI.pause();
@@ -310,7 +302,7 @@ function frame(now) {
 // Capture dynamic menu buttons once; touch keys already have their own sound.
 document.addEventListener('click', event => {
   const button = event.target.closest?.('button');
-  if (!button || button.disabled || button.id === 'sound-toggle' || button.hasAttribute('data-key') || !settings.sound) return;
-  initAudio().then(() => sound('click'));
+  if (!button || button.disabled || ['sound-toggle', 'study-hint', 'study-reveal'].includes(button.id) || button.hasAttribute('data-key') || button.hasAttribute('data-sound-preview') || !settings.sound) return;
+  sound('click');
 }, true);
 updateSoundStatus(); title(); requestAnimationFrame(frame);

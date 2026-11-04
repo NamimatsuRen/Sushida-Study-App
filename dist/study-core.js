@@ -99,7 +99,7 @@ export class StudyRound {
     this.plateLimit = options.plateSeconds || 6;
     this.cueMode = options.cueMode === 'none' ? 'none' : 'initial-and-length';
     this.position = 0; this.records = []; this.phase = entries.length ? 'question' : 'done';
-    this.paused = false;
+    this.paused = false; this.cleanStreak = 0; this.bestStreak = 0;
     this.resetQuestion();
   }
   get current() { return this.queue[this.position]; }
@@ -162,7 +162,10 @@ export class StudyRound {
     const price = studyPlateValue(accepted);
     const characters = [...normalizeStudy(accepted)].length;
     const points = outcome === 'forgot' ? 0 : price;
-    const event = { id: card.id, kind, delayed, cue: this.cueMode, outcome, points, price, characters, addedHints: this.addedHints, misses: this.misses, timedOut };
+    this.cleanStreak = outcome === 'recalled' ? this.cleanStreak + 1 : 0;
+    this.bestStreak = Math.max(this.bestStreak, this.cleanStreak);
+    const milestone = this.cleanStreak > 0 && this.cleanStreak % 3 === 0;
+    const event = { id: card.id, kind, delayed, cue: this.cueMode, outcome, points, price, characters, addedHints: this.addedHints, misses: this.misses, timedOut, streak: this.cleanStreak, milestone };
     this.records.push(event); this.phase = 'feedback';
     if (outcome !== 'recalled' && kind !== 'retry' && this.queue.length - this.position - 1 >= 2) this.queue.splice(this.position + 3, 0, { ...this.current, kind: 'retry', delayed: false });
     return event;

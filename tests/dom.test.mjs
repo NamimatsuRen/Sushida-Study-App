@@ -21,15 +21,15 @@ function setup(saved = null, learningSaved = null, mockAudio = false) {
   if (mockAudio) w.AudioContext = class {
     constructor() { this.state = 'suspended'; this.currentTime = 0; this.destination = {}; }
     resume() { this.state = 'running'; return Promise.resolve(); }
-    createOscillator() { const item = { frequency: { setValueAtTime: value => item.hz = value, exponentialRampToValueAtTime() {} }, connect() {}, start() { audioEvents.push(item.hz); }, stop() {} }; return item; }
-    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+    createOscillator() { const item = { frequency: { setValueAtTime: value => item.hz = value, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {} }, connect() {}, disconnect() {}, start() { audioEvents.push(item.hz); }, stop() {} }; return item; }
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
   };
   w.confirm = () => true;
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; };
   if (learningSaved) w.localStorage.setItem('sushi-type-learning-v1', learningSaved);
   if (saved) w.localStorage.setItem('sushi-type-english-v2', saved);
-  w.eval(['core.js', 'phrases.js', 'sushi.js', 'study-core.js', 'activity.js', 'study-cards.js', 'study.js', 'app.js'].map(file => readFileSync(root + 'dist/' + file, 'utf8').replace(/^import .+;\n/gm, '').replace(/export /g, '')).join('\n'));
+  w.eval(['core.js', 'phrases.js', 'sushi.js', 'study-core.js', 'activity.js', 'study-cards.js', 'study.js', 'sound.js', 'app.js'].map(file => readFileSync(root + 'dist/' + file, 'utf8').replace(/^import .+;\n/gm, '').replace(/export /g, '')).join('\n'));
   const q = selector => w.document.querySelector(selector);
   const click = selector => { assert.ok(q(selector), selector); q(selector).click(); };
   const key = (key, extras = {}) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extras }));
@@ -184,6 +184,42 @@ test('menu click sound works on the first gesture and dynamic buttons, and respe
   click('#start-study'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 1);
   click('[data-study-deck="vocabulary"]'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 2);
   click('#sound-toggle'); click('#study-back'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 2); w.close();
+});
+
+test('volume and sound previews work, survive reload and honor mute and zero volume', async () => {
+  const { q, click, audioEvents, w } = setup(null, null, true);
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  click('#settings-button'); await settle();
+  assert.equal(q('#setting-volume').value, '35');
+  const before = audioEvents.length; click('[data-sound-preview="plate"]'); await settle();
+  assert.deepEqual(audioEvents.slice(before), [523.25, 659.25, 1046.5]); // No extra button click over a preview.
+  q('#setting-volume').value = '20'; q('#setting-volume').dispatchEvent(new w.Event('input'));
+  assert.equal(q('#sound-volume-value').textContent, '20%');
+  const saved = w.localStorage.getItem('sushi-type-english-v2'); assert.equal(JSON.parse(saved).settings.volume, .2);
+  q('#setting-volume').value = '0'; q('#setting-volume').dispatchEvent(new w.Event('input'));
+  assert.equal(q('[data-sound-preview="plate"]').disabled, true);
+  const silentAt = audioEvents.length; click('[data-sound-preview="plate"]'); await settle(); assert.equal(audioEvents.length, silentAt);
+  q('#setting-volume').value = '20'; q('#setting-volume').dispatchEvent(new w.Event('input'));
+  q('#setting-sound').checked = false; q('#setting-sound').dispatchEvent(new w.Event('change'));
+  assert.equal(q('[data-sound-preview="promote"]').disabled, true);
+  click('#close-dialog'); click('#start-study'); await settle(); assert.equal(audioEvents.length, silentAt);
+  const reload = setup(saved); reload.click('#settings-button'); assert.equal(reload.q('#setting-volume').value, '20');
+  reload.w.close(); w.close();
+});
+
+test('learning celebrates three clean plates immediately and clears the streak after an assisted answer', async () => {
+  const { q, click, audioEvents, w } = setup(null, null, true);
+  click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin');
+  const type = text => { for (const key of text) q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); };
+  type('apple'); type('break'); type('decision');
+  assert.ok(q('#study-streak').textContent.includes('3連続')); assert.equal(w.document.querySelectorAll('.study-streak-dots .filled').length, 3);
+  assert.ok(q('.study-last-outcome.study-milestone').textContent.includes('3連続！')); assert.equal(q('#study-feedback').textContent, '');
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 880).length, 1);
+  type('q~~'); assert.ok(q('#study-answer').classList.contains('study-input-miss')); assert.ok(q('#study-hint-text').textContent.includes('2回ミス'));
+  const logs = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')).logs; assert.equal(logs.length, 3);
+  type('uestion'); assert.ok(q('.study-feedback.assisted')); assert.ok(q('#study-streak').textContent.includes('0連続'));
+  click('#study-stop'); click('#study-finish-now'); assert.ok(q('.study-result-caption').textContent.includes('3皿'));
+  w.close();
 });
 
 test('learning calendar migrates old logs, updates after each response, and stays stable after reload', () => {

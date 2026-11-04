@@ -69,6 +69,10 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
       round = new StudyRound(plan.entries, studyState.progress, { seconds: deck.seconds || 90, plateSeconds: deck.plateSeconds || 6, cueMode: q('#study-probe').checked ? 'none' : 'initial-and-length', continuous: true }); award = 0; lastOutcome = null; advanceAt = null; question();
     };
   }
+  function streakMarkup() {
+    const filled = round.cleanStreak ? (round.cleanStreak - 1) % 3 + 1 : 0;
+    return `<div id="study-streak" class="study-streak ${lastOutcome?.milestone ? 'is-milestone' : ''}"><span>追加ヒントなし <b>${round.cleanStreak}連続</b></span><div class="study-streak-dots" aria-hidden="true">${[1, 2, 3].map(n => `<i class="${n <= filled ? 'filled' : ''}"></i>`).join('')}</div><small>3皿ごとにお祝い</small></div>`;
+  }
   function question() {
     route = 'question'; composing = false; lastStudyTick = performance.now();
     const { card, kind } = round.current;
@@ -79,9 +83,9 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     screen.innerHTML = `<div class="study-hud"><button id="study-stop" class="plain-button">Ⅱ 一時停止</button><span>${escape(deck.title)}</span><strong>${completed + 1}皿目 · ${round.lap}周目${kind === 'retry' ? ' · 再挑戦' : ''}</strong></div>
       <div class="study-progress"><i style="width:${(1 - round.remaining / (deck.seconds || 90)) * 100}%"></i></div>
       <div class="study-clock"><span>コース残り <b id="study-total-time"></b>秒</span><span>このお皿 <b id="study-plate-time"></b>秒</span><small>自動の答え表示中もコース時計は進みます</small></div>
-      <div class="study-rail"><div class="study-plate">${sushi(deck.sushi, dishTier())}<b id="study-dish-price" class="study-dish-price"></b></div><span id="study-rail-note">2回ミスで、その位置の1文字が見えます。</span></div>
+      ${streakMarkup()}<div class="study-rail"><div class="study-plate">${sushi(deck.sushi, dishTier())}<b id="study-dish-price" class="study-dish-price"></b></div><span id="study-rail-note">2回ミスで、その位置の1文字が見えます。</span></div>
       <div class="study-plate-progress"><i id="study-plate-meter"></i></div>
-      <div class="study-last-outcome" role="status">${lastOutcome ? `${escape(lastOutcome.word)} · ${escape(lastOutcome.label)} ${lastOutcome.points ? "+" + lastOutcome.points + "円" : ""}` : "正解したら、自動で次のお皿へ。"}</div><section class="study-prompt-panel"><span class="study-question-kind">${kind === 'new' ? 'はじめての練習' : kind === 'retry' ? '少し間を空けて、もう一度' : kind === 'extra' ? '追加練習' : '頭文字を頼りに復習'}</span><h2>${escape(card.prompt).replace(/\n/g, '<br>')}</h2>
+      <div class="study-last-outcome ${lastOutcome?.milestone ? 'study-milestone' : ''}" role="status">${lastOutcome ? `${escape(lastOutcome.word)} · ${escape(lastOutcome.label)} ${lastOutcome.points ? "+" + lastOutcome.points + "円" : ""}${lastOutcome.milestone ? ` · ${lastOutcome.streak}連続！` : ''}` : "正解したら、自動で次のお皿へ。"}</div><section class="study-prompt-panel"><span class="study-question-kind">${kind === 'new' ? 'はじめての練習' : kind === 'retry' ? '少し間を空けて、もう一度' : kind === 'extra' ? '追加練習' : '頭文字を頼りに復習'}</span><h2>${escape(card.prompt).replace(/\n/g, '<br>')}</h2>
       <div id="study-mask" class="study-mask" aria-label="頭文字と文字数の手掛かり"></div>
       <form id="study-answer-form"><label for="study-answer">${probe ? "手掛かりなしで答えを入力・Enterで判定" : "1文字ずつ入力（スペースも必要です）"}</label><div class="study-input-row"><input id="study-answer" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="300" placeholder="最初の文字から打ってみよう…"></div></form>
       <div class="study-support"><button id="study-hint" class="plain-button" ${probe ? "disabled" : ""}>次の1文字をヒントに</button><button id="study-reveal" class="plain-button">まだわからない・答えを見る</button></div><p id="study-hint-text" role="status"></p><p class="study-input-help">${probe ? "答えは送信後まで表示しません。Enterで答え合わせ。" : "英語は半角英数で。最後まで打てたら自動で答え合わせ。見えた文字も、自分で入力して進みます。"}</p><div id="study-feedback" aria-live="polite"></div></section>
@@ -112,7 +116,9 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     };
     q('#study-hint').onclick = () => {
       tick(); if (round.phase !== 'question' || round.paused) return;
-      round.hint(); q('#study-hint-text').textContent = '1文字を追加しました。今回は「追加ヒントあり」で記録します。';
+      const before = round.addedHints; round.hint();
+      if (round.addedHints > before) sound('hint');
+      q('#study-hint-text').textContent = round.addedHints > before ? '1文字を追加しました。今回は「追加ヒントあり」で記録します。' : '追加できる文字はすべて表示しています。見えた文字を打って進もう！';
       drawQuestion(); input.focus();
     };
     q('#study-reveal').onclick = () => { tick(); if (round.phase === 'question') feedback(round.submit('', true)); };
@@ -124,7 +130,10 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     if (!result) return;
     if (result.kind === 'complete') feedback(result.event);
     else {
-      sound(result.kind === 'miss' ? 'miss' : 'key');
+      sound(result.revealed ? 'hint' : result.kind === 'miss' ? 'miss' : 'key');
+      const field = q('#study-answer'); field.classList.remove('study-input-miss');
+      if (result.kind === 'miss') { void field.offsetWidth; field.classList.add('study-input-miss'); }
+      field.onanimationend = () => field.classList.remove('study-input-miss');
       if (result.revealed) q('#study-hint-text').textContent = '同じ位置で2回ミス。1文字を表示しました。その文字を打って進もう！';
       drawQuestion();
     }
@@ -186,11 +195,12 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     studyState.logs.push(recorded.log); studyState.logs = studyState.logs.slice(-2000);
     studyState.activity = addStudyActivity(studyState.activity, recorded.log); save();
     lastStudyTick = performance.now();
-    award += event.points; sound(event.outcome === 'forgot' ? 'start' : 'plate');
+    award += event.points; sound(event.milestone ? 'promote' : event.outcome === 'forgot' ? 'demote' : 'plate');
     q('#study-answer').readOnly = true;
     q('#study-hint').disabled = true; q('#study-reveal').disabled = true;
     q('#study-score').textContent = `${award.toLocaleString("ja-JP")}円分`;
-    lastOutcome = { word: card.answers[0], label: event.outcome === 'recalled' ? '追加ヒントなし' : event.outcome === 'assisted' ? 'ヒントで完答' : 'また回そう', points: event.points };
+    lastOutcome = { word: card.answers[0], label: event.outcome === 'recalled' ? '追加ヒントなし' : event.outcome === 'assisted' ? 'ヒントで完答' : 'また回そう', points: event.points, milestone: event.milestone, streak: event.streak };
+    q('#study-streak').outerHTML = streakMarkup();
     if (event.outcome === 'recalled') { advanceRound(); return; }
     q('#study-mask').textContent = card.answers[0];
     q('#study-rail-note').textContent = '答えをひと目見て、次のお皿へ。';
@@ -207,6 +217,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
 
   function results(interrupted = false) {
     route = 'result'; advanceAt = null;
+    if (round.records.length) sound('finish');
     const first = round.records.filter(event => event.kind !== 'retry');
     const count = outcome => first.filter(event => event.outcome === outcome).length;
     const reviews = first.filter(event => event.kind === 'review');
@@ -217,7 +228,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     screen.innerHTML = `${header('ONE RECALL AT A TIME', interrupted ? '今日は、ここまで。' : 'ひと皿ずつ、積み重ねました。', '「今できた」と「後日も思い出せた」を、分けて育てよう。')}
       <div class="study-result-art">${sushi(deck.sushi, 4)}</div><div class="study-reward-total">${award.toLocaleString("ja-JP")}<span>円分のお寿司をゲット</span></div>
       <div class="study-result-stats"><div><b>${count('recalled')}</b><span>追加ヒントなし</span></div><div><b>${count('assisted')}</b><span>ヒントあり</span></div><div><b>${count('forgot')}</b><span>学び直し</span></div></div>
-      <p class="study-result-caption">全${round.records.length}回・${unique.length}種類に挑戦。上の数字は周回を含み、間違い直後の再挑戦は重複計上しません。</p>
+      <p class="study-result-caption">全${round.records.length}回・${unique.length}種類に挑戦。上の数字は周回を含み、間違い直後の再挑戦は重複計上しません。<br>追加ヒントなしの最長連続完答：<b>${round.bestStreak}皿</b>（今回の周回内）</p>
       <div class="study-review-detail"><b>今回の期限が来た復習：${reviews.length}枚中 ${reviews.filter(event => event.outcome === 'recalled').length}枚を追加ヒントなし完答</b><p>${nextDue ? `次の復習は${dueLabel(nextDue)}。` : 'まだ回答した問題はありません。'}${round.records.some(event => event.kind === 'retry') ? '同じ回の解き直しは、元の復習予定を維持しています。' : ''}</p></div>
       <p class="activity-session-note" role="status">今日の累計：${studyActivityView(studyState.activity).today.attempts.toLocaleString("ja-JP")}回の挑戦。学習カレンダーに記録しました。</p><h2 class="study-recap-heading">答え・解説は、ここでまとめて。</h2><div class="study-result-list">${unique.map(event => { const card = deck.cards.find(item => item.id === event.id); return `<details class="study-recap"><summary><span>${escape(card.prompt)}</span><b>${event.outcome === 'recalled' ? '追加ヒントなし' : event.outcome === 'assisted' ? 'ヒントあり' : '要復習'}</b></summary><div class="study-correct-answer">${escape(card.answers[0])}</div>${card.example ? `<p>${escape(card.example)}</p>` : ''}<p>${escape(card.explanation)}</p><small>次の復習：${dueLabel(studyState.progress[event.id].due)}</small></details>`; }).join('')}</div>
       <button id="study-again" class="red-button study-main-action">同じコースでもう1回 ▶</button>

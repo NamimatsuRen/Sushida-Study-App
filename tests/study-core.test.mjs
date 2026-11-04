@@ -8,6 +8,22 @@ const entry = (card = cards[0], kind = 'review') => ({ card, kind, delayed: true
 const freshProgress = () => introduceStudy({}, [entry(cards[0], 'new')], now);
 const typeAnswer = round => { let result; for (const char of round.current.card.answers[0]) result = round.type(char); return result; };
 
+test('three clean completions celebrate without changing prices, time or review scheduling', () => {
+  const round = new StudyRound([entry(cards[0]), entry(cards[1]), entry(cards[2])], {}, { continuous: true });
+  const events = [];
+  for (let i = 0; i < 3; i++) { events.push(typeAnswer(round).event); round.next(); }
+  assert.deepEqual(events.map(e => e.milestone), [false, false, true]);
+  assert.deepEqual(events.map(e => e.streak), [1, 2, 3]);
+  assert.equal(round.remaining, 60); assert.equal(round.plateLimit, 6); assert.equal(round.bestStreak, 3);
+  assert.ok(events.every(e => e.points === e.price));
+  const plain = { ...events[0] }; delete plain.streak; delete plain.milestone;
+  assert.deepEqual(recordStudy(freshProgress(), events[0], now).progress, recordStudy(freshProgress(), plain, now).progress);
+  round.hint(); const assisted = typeAnswer(round).event;
+  assert.equal(assisted.outcome, 'assisted'); assert.equal(assisted.streak, 0); assert.equal(assisted.milestone, false);
+  round.next(); typeAnswer(round); round.next();
+  assert.equal(round.cleanStreak, 1); assert.equal(round.submit('', true).streak, 0); assert.equal(round.bestStreak, 3);
+});
+
 test('word, collocation and sentence share themes but keep separate memory records', () => {
   assert.deepEqual(STUDY_DECKS.map(deck => deck.seconds), [60, 90, 120]);
   assert.ok(STUDY_DECKS[1].cards.some(card => card.answers[0] === 'make a decision'));
