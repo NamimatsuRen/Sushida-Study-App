@@ -261,7 +261,10 @@ $('#settings-button').onclick = () => {
     draw();
   };
 };
-$('#history-button').onclick = () => openDialog('これまでの記録', history.length ? `<p class="small-note">直近50回。キーボードとタッチの自己ベストは別に集計します。</p><div class="history-list">${history.map(row => `<article><div><b>${COURSES[row.course].name} ${yen(COURSES[row.course].price)}円</b><span>${MODES[row.mode].name} · ${new Date(row.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${row.touch ? ' · タッチ' : ''}${row.reason === 'exit' ? ' · 途中終了' : ''}</span></div><strong class="${row.net >= 0 ? 'positive' : ''}">${row.net < 0 ? '−' : '+'}${yen(row.net)}<small> 円</small></strong></article>`).join('')}</div>` : '<div class="history-empty">まだ記録がありません。<br>まずはひと皿、食べてみましょう。</div>');
+$('#history-button').onclick = () => {
+  if (phase === 'study') studyUI.pause();
+  openDialog('これまでの記録', studyUI.activityMarkup() + '<h3 class="history-section-title">タイピングゲームの記録</h3>' + (history.length ? `<p class="small-note">直近50回。キーボードとタッチの自己ベストは別に集計します。</p><div class="history-list">${history.map(row => `<article><div><b>${COURSES[row.course].name} ${yen(COURSES[row.course].price)}円</b><span>${MODES[row.mode].name} · ${new Date(row.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${row.touch ? ' · タッチ' : ''}${row.reason === 'exit' ? ' · 途中終了' : ''}</span></div><strong class="${row.net >= 0 ? 'positive' : ''}">${row.net < 0 ? '−' : '+'}${yen(row.net)}<small> 円</small></strong></article>`).join('')}</div>` : '<div class="history-empty">まだ記録がありません。<br>まずはひと皿、食べてみましょう。</div>'));
+};
 $('#close-dialog').onclick = () => $('#dialog').close();
 $('#home-link').onclick = event => {
   event.preventDefault();

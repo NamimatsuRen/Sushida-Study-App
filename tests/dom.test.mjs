@@ -29,7 +29,7 @@ function setup(saved = null, learningSaved = null, mockAudio = false) {
   w.HTMLDialogElement.prototype.close = function () { this.open = false; };
   if (learningSaved) w.localStorage.setItem('sushi-type-learning-v1', learningSaved);
   if (saved) w.localStorage.setItem('sushi-type-english-v2', saved);
-  w.eval(['core.js', 'phrases.js', 'sushi.js', 'study-core.js', 'study-cards.js', 'study.js', 'app.js'].map(file => readFileSync(root + 'dist/' + file, 'utf8').replace(/^import .+;\n/gm, '').replace(/export /g, '')).join('\n'));
+  w.eval(['core.js', 'phrases.js', 'sushi.js', 'study-core.js', 'activity.js', 'study-cards.js', 'study.js', 'app.js'].map(file => readFileSync(root + 'dist/' + file, 'utf8').replace(/^import .+;\n/gm, '').replace(/export /g, '')).join('\n'));
   const q = selector => w.document.querySelector(selector);
   const click = selector => { assert.ok(q(selector), selector); q(selector).click(); };
   const key = (key, extras = {}) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extras }));
@@ -184,4 +184,27 @@ test('menu click sound works on the first gesture and dynamic buttons, and respe
   click('#start-study'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 1);
   click('[data-study-deck="vocabulary"]'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 2);
   click('#sound-toggle'); click('#study-back'); await new Promise(resolve => setImmediate(resolve)); assert.equal(audioEvents.filter(hz => hz === 1700).length, 2); w.close();
+});
+
+test('learning calendar migrates old logs, updates after each response, and stays stable after reload', () => {
+  const at = Date.now();
+  const logs = [ { id: 'old-a', outcome: 'recalled', at, kind: 'new' }, { id: 'old-b', outcome: 'assisted', at, kind: 'extra' } ];
+  const { q, click, w } = setup(null, JSON.stringify({ progress: {}, logs }));
+  click('#start-study'); assert.equal(q('[data-activity-today]').textContent, '2回');
+  click('[data-study-deck="vocabulary"]'); click('#study-begin');
+  for (const key of 'apple') q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  const saved = w.localStorage.getItem('sushi-type-learning-v1'); assert.equal(Object.values(JSON.parse(saved).activity)[0].attempts, 3);
+  click('#study-stop'); click('#study-finish-now'); assert.ok(q('.activity-session-note').textContent.includes('3回'));
+  click('#study-done'); assert.equal(q('[data-activity-today]').textContent, '3回');
+  const reload = setup(null, saved); reload.click('#start-study'); assert.equal(reload.q('[data-activity-today]').textContent, '3回');
+  reload.w.close(); w.close();
+});
+test('daily aggregate is kept when detailed logs roll off and is available from the shared history button', () => {
+  const date = new Date(); const key = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const stored = { progress: {}, logs: [], activity: { [key]: { attempts: 3500, correct: 3000, assisted: 400, forgot: 100 } } };
+  const { q, click, w } = setup(null, JSON.stringify(stored));
+  click('#history-button'); assert.ok(q('#dialog').open); assert.equal(q('#dialog [data-activity-today]').textContent, '3,500回');
+  assert.ok(q('.activity-calendar svg').getAttribute('aria-label').includes('3500回')); assert.equal(w.document.querySelectorAll('.activity-recent tbody tr').length, 7);
+  click('#close-dialog'); click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin'); click('#study-reveal');
+  const saved = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')); assert.equal(saved.activity[key].attempts, 3501); assert.equal(saved.logs.length, 1); w.close();
 });

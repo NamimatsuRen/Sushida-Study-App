@@ -1,8 +1,9 @@
+import { addStudyActivity, restoreStudyActivity, renderStudyActivity, studyActivityView } from './activity.js';
 import { STUDY_DECKS } from './study-cards.js';
 import { StudyRound, planStudy, introduceStudy, recordStudy, delayedStudyStats, validStudyProgress, parseStudyMarkdown, STUDY_PRICES } from './study-core.js';
 
 export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }) {
-  let studyState = { progress: {}, logs: [], custom: null };
+  let studyState = { progress: {}, logs: [], activity: {}, custom: null };
   let deck = null, round = null, plan = null, route = 'menu', composing = false;
   let award = 0, lastStudyTick = 0, advanceAt = null, advanceWait = 0, lastOutcome = null;
   const storageKey = 'sushi-type-learning-v1';
@@ -11,6 +12,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     if (saved) {
       studyState.progress = validStudyProgress(saved.progress);
       if (Array.isArray(saved.logs)) studyState.logs = saved.logs.filter(log => log && typeof log.id === 'string' && ['recalled', 'assisted', 'forgot'].includes(log.outcome) && Number.isFinite(log.at)).slice(-2000);
+      studyState.activity = restoreStudyActivity(saved.activity, studyState.logs);
       if (typeof saved.markdown === 'string') {
         const parsed = parseStudyMarkdown(saved.markdown);
         if (!parsed.errors.length) studyState.custom = { ...parsed, id: 'custom', label: '自分の問題', description: 'ノートを小さな問いに変えて、思い出す。', sushi: 'egg', markdown: saved.markdown };
@@ -21,7 +23,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
   const q = selector => screen.querySelector(selector);
   function save() {
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ version: 1, progress: studyState.progress, logs: studyState.logs.slice(-2000), markdown: studyState.custom?.markdown || '' }));
+      localStorage.setItem(storageKey, JSON.stringify({ version: 2, activity: studyState.activity, progress: studyState.progress, logs: studyState.logs.slice(-2000), markdown: studyState.custom?.markdown || '' }));
       return true;
     } catch { toast('学習記録を保存できません。ブラウザのストレージ設定をご確認ください。'); return false; }
   }
@@ -44,7 +46,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     screen.innerHTML = `${header('RECALL · REVIEW · REMEMBER', '思い出して、ひと皿。', '頭文字と空欄を頼りに、時間内にことばを思い出して打とう。')}
       <div class="study-summary"><div><span>いま復習できる</span><b>${totalDue}<small>枚</small></b></div><div><span>今回のスタイル</span><b>周回<small>時間いっぱい</small></b></div><div><span>翌日以降・追加ヒントなし</span><b>${stats.total ? `${stats.correct}<small> / ${stats.total}回</small>` : '—'}</b></div></div>
       <div class="study-decks">${plans.map(({ item, available }, i) => `<article class="study-deck"><div class="study-deck-art">${sushi(item.sushi, i % 6)}</div><span class="study-deck-label">${escape(item.label)}</span><h2>${escape(item.title)}</h2><p>${escape(item.description)}</p><div class="study-deck-status"><span>${available.dueCount}枚 復習待ち</span><span>未学習 ${available.unseenCount}枚</span></div><button class="red-button" data-study-deck="${escape(item.id)}">${available.entries.length ? '今日のひと皿へ' : '復習の予定を見る'} →</button></article>`).join('')}</div>
-      <div class="study-menu-actions"><button class="wood-button" id="study-import">＋ Markdownから問題を登録</button><button class="plain-button" id="study-method">学び方と研究の根拠</button><button class="plain-button" id="study-exit">タイトルへ戻る</button></div>
+      ${renderStudyActivity(studyState.activity, Date.now())}<div class="study-menu-actions"><button class="wood-button" id="study-import">＋ Markdownから問題を登録</button><button class="plain-button" id="study-method">学び方と研究の根拠</button><button class="plain-button" id="study-exit">タイトルへ戻る</button></div>
       <p class="study-footnote">手掛かりなしの後日確認：${stats.freeTotal ? stats.freeCorrect + " / " + stats.freeTotal + "回正答" : "まだ記録がありません"}。<br>正解したらそのまま次へ。枚数上限なしで、制限時間まで周回します。初回練習や同じ日の解き直しは、翌日以降・追加ヒントなしに含めません。<br>集計は保存した直近2,000回答が対象です。記録はこのブラウザに保存され、端末間同期はありません。</p>`;
     screen.querySelectorAll('[data-study-deck]').forEach(button => button.onclick = () => prepare(studyAllDecks().find(item => item.id === button.dataset.studyDeck)));
     q('#study-exit').onclick = showTitle;
@@ -181,7 +183,8 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     const { card } = round.current;
     const recorded = recordStudy(studyState.progress, event, Date.now());
     studyState.progress = recorded.progress;
-    studyState.logs.push(recorded.log); studyState.logs = studyState.logs.slice(-2000); save();
+    studyState.logs.push(recorded.log); studyState.logs = studyState.logs.slice(-2000);
+    studyState.activity = addStudyActivity(studyState.activity, recorded.log); save();
     lastStudyTick = performance.now();
     award += event.points; sound(event.outcome === 'forgot' ? 'start' : 'plate');
     q('#study-answer').readOnly = true;
@@ -216,7 +219,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
       <div class="study-result-stats"><div><b>${count('recalled')}</b><span>追加ヒントなし</span></div><div><b>${count('assisted')}</b><span>ヒントあり</span></div><div><b>${count('forgot')}</b><span>学び直し</span></div></div>
       <p class="study-result-caption">全${round.records.length}回・${unique.length}種類に挑戦。上の数字は周回を含み、間違い直後の再挑戦は重複計上しません。</p>
       <div class="study-review-detail"><b>今回の期限が来た復習：${reviews.length}枚中 ${reviews.filter(event => event.outcome === 'recalled').length}枚を追加ヒントなし完答</b><p>${nextDue ? `次の復習は${dueLabel(nextDue)}。` : 'まだ回答した問題はありません。'}${round.records.some(event => event.kind === 'retry') ? '同じ回の解き直しは、元の復習予定を維持しています。' : ''}</p></div>
-      <h2 class="study-recap-heading">答え・解説は、ここでまとめて。</h2><div class="study-result-list">${unique.map(event => { const card = deck.cards.find(item => item.id === event.id); return `<details class="study-recap"><summary><span>${escape(card.prompt)}</span><b>${event.outcome === 'recalled' ? '追加ヒントなし' : event.outcome === 'assisted' ? 'ヒントあり' : '要復習'}</b></summary><div class="study-correct-answer">${escape(card.answers[0])}</div>${card.example ? `<p>${escape(card.example)}</p>` : ''}<p>${escape(card.explanation)}</p><small>次の復習：${dueLabel(studyState.progress[event.id].due)}</small></details>`; }).join('')}</div>
+      <p class="activity-session-note" role="status">今日の累計：${studyActivityView(studyState.activity).today.attempts.toLocaleString("ja-JP")}回の挑戦。学習カレンダーに記録しました。</p><h2 class="study-recap-heading">答え・解説は、ここでまとめて。</h2><div class="study-result-list">${unique.map(event => { const card = deck.cards.find(item => item.id === event.id); return `<details class="study-recap"><summary><span>${escape(card.prompt)}</span><b>${event.outcome === 'recalled' ? '追加ヒントなし' : event.outcome === 'assisted' ? 'ヒントあり' : '要復習'}</b></summary><div class="study-correct-answer">${escape(card.answers[0])}</div>${card.example ? `<p>${escape(card.example)}</p>` : ''}<p>${escape(card.explanation)}</p><small>次の復習：${dueLabel(studyState.progress[event.id].due)}</small></details>`; }).join('')}</div>
       <button id="study-again" class="red-button study-main-action">同じコースでもう1回 ▶</button>
       <button id="study-done" class="red-button study-main-action">学習メニューへ</button><p class="study-footnote">これは語彙・知識の取り出し練習です。会話力や長期の記憶定着を保証する評価ではありません。</p>`;
     q('#study-done').onclick = menu;
@@ -257,6 +260,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
   }
   return {
     open: menu,
+    activityMarkup: () => renderStudyActivity(studyState.activity, Date.now()),
     frame: tick,
     pause,
     leave() {
