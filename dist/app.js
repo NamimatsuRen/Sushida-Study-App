@@ -1,0 +1,315 @@
+import { SushiSound } from './sound.js';
+import { createStudyUI } from './study.js';
+import { COURSES, MODES, PRICES, TYPES, BONUS_EVERY, TypingGame, yen } from './core.js';
+import { PHRASES } from './phrases.js';
+import { sushi } from './sushi.js';
+import { accountStore } from './account-store.js';
+import { authController } from './auth.js';
+import { mountAccountUI } from './auth-ui.js';
+
+const $ = selector => document.querySelector(selector);
+const escape = text => String(text).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+const screen = $('#screen');
+const defaults = { sound: true, volume: .35, translation: true, keyboard: false };
+let settings = { ...defaults }, history = [], bests = {}, storageAvailable = true;
+try {
+  const saved = JSON.parse(accountStore.getItem('sushi-type-english-v2') || 'null');
+  if (saved) {
+    for (const key of ['sound', 'translation', 'keyboard']) if (typeof saved.settings?.[key] === 'boolean') settings[key] = saved.settings[key];
+    if (typeof saved.settings?.volume === 'number' && Number.isFinite(saved.settings.volume)) settings.volume = Math.max(0, Math.min(1, saved.settings.volume));
+    if (Array.isArray(saved.history)) history = saved.history.filter(row => COURSES[row.course] && MODES[row.mode] && Number.isFinite(row.score)).slice(0, 50);
+    if (saved.bests && typeof saved.bests === 'object') bests = saved.bests;
+  }
+} catch { storageAvailable = false; }
+let phase = 'title', mode = 'normal', course = 'easy', game = null;
+let lastTick = 0, countdownTimer = null, displayedPhrase = null, touchUsed = false;
+let renderedIndex = -1, renderedTranslation = null;
+let toastTimer;
+const soundFX = new SushiSound({ enabled: () => settings.sound, volume: () => settings.volume });
+const studyUI = createStudyUI({ screen, escape, sushi, sound, showTitle: title, toast, storage: accountStore });
+
+function toast(message) {
+  clearTimeout(toastTimer);
+  $('#toast').textContent = message;
+  $('#toast').classList.add('visible');
+  toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 3500);
+}
+function persist() {
+  try { accountStore.setItem('sushi-type-english-v2', JSON.stringify({ settings, history, bests })); }
+  catch { storageAvailable = false; toast('記録を保存できません。ブラウザのストレージ設定を確認してください。'); }
+}
+function initAudio() { return soundFX.init(); }
+function sound(kind) { return soundFX.play(kind); }
+function syncSound() {
+  if (!settings.sound || settings.volume === 0) soundFX.stop();
+  soundFX.updateVolume();
+  document.querySelectorAll('[data-sound-preview]').forEach(button => { button.disabled = !settings.sound || settings.volume === 0; });
+}
+function updateSoundStatus() {
+  $('#sound-status').innerHTML = `<button id="sound-toggle" aria-pressed="${settings.sound}">${settings.sound ? '♪ SOUND ON' : '♪ SOUND OFF'}</button>`;
+  $('#sound-toggle').onclick = () => { settings.sound = !settings.sound; syncSound(); initAudio(); persist(); updateSoundStatus(); };
+}
+function cancelCountdown() { clearInterval(countdownTimer); countdownTimer = null; }
+function title() {
+  cancelCountdown(); phase = 'title'; game = null;
+  screen.className = 'screen title-screen';
+  const home = studyUI.homeData();
+  screen.className = 'screen title-screen learning-home';
+  screen.innerHTML = `<section class="home-hero"><div class="home-hero-copy"><p class="eyebrow">A LITTLE PRACTICE, EVERY DAY</p><h1>思い出すたび、<br><em>できる</em>が増える。</h1><p class="home-lead">単語から、フレーズ、例文へ。<br>英語をひと皿ずつ、自分のペースで。</p><div class="home-actions"><button id="start-study" class="red-button">${home.due ? '今日の復習をはじめる' : '学習をはじめる'} <span>→</span></button><button id="start-menu" class="plain-button arcade-entry">タイピングだけで遊ぶ ↗</button></div><p class="home-reassurance">登録なしで、すぐに体験できます。</p></div><div class="home-illustration" aria-hidden="true"><div class="illustration-orbit"></div><div class="hero-word-card"><span>りんごを英語で？</span><b>a<span>p</span>ple</b><i>THINK · TYPE · REMEMBER</i></div><div class="hero-sushi">${sushi('shrimp', 1)}</div><span class="illustration-note">ひと皿ずつ、成長中。</span><span class="illustration-spark one">✦</span><span class="illustration-spark two">✦</span></div></section>
+    <section class="home-stats" aria-label="学習のようす"><div><span class="home-stat-icon" aria-hidden="true">✓</span><p>今日の挑戦<strong>${home.activity.today.attempts.toLocaleString('ja-JP')}<small>回</small></strong></p></div><div><span class="home-stat-icon" aria-hidden="true">↻</span><p>いま復習できる<strong>${home.due}<small>問</small></strong></p></div><div><span class="home-stat-icon" aria-hidden="true">✦</span><p>${home.activity.streakIncludesToday ? '今日まで' : '昨日まで'}の連続<strong>${home.activity.streak}<small>日</small></strong></p></div></section>
+    <section class="home-course-section"><div class="home-section-heading"><div><p class="eyebrow">FIND YOUR NEXT STEP</p><h2>どこから学ぼう？</h2></div><span>単語 → 熟語 → 例文</span></div><div class="home-courses">${home.decks.map((item, i) => `<button class="home-course home-course-${i % 3}" data-home-deck="${escape(item.id)}"><div class="home-course-art">${sushi(item.sushi, i + 1)}<span>STEP ${String(i + 1).padStart(2, '0')}</span></div><div class="home-course-body"><span class="home-course-label">${escape(item.label)}</span><h3>${i === 0 ? 'まずは、ひとつの単語から' : i === 1 ? 'ことばを、つなげてみよう' : i === 2 ? '文章で、思いを伝えよう' : escape(item.title)}</h3><p>${escape(item.description)}</p><div class="home-course-meta"><span>1皿 ${item.plateSeconds || 6}秒</span><span>${item.cards.length}問</span></div><div class="home-course-progress" role="progressbar" aria-label="${escape(item.label)}で取り組んだ問題" aria-valuemin="0" aria-valuemax="${item.cards.length}" aria-valuenow="${item.practiced}"><i style="width:${item.practiced / item.cards.length * 100}%"></i></div><div class="home-course-bottom"><span>取り組み ${item.practiced} / ${item.cards.length}</span><b>${item.dueCount ? '復習 ' + item.dueCount + '問' : 'はじめる'} →</b></div></div></button>`).join('')}</div><p class="home-progress-note">「取り組み」は一度回答した問題の数です。習得度は後日の復習で確かめましょう。</p></section>
+    <section class="home-bottom"><div><span class="eyebrow">YOUR EVERYDAY LEARNING</span><h2>小さな練習を、確かな記録に。</h2><p>毎日の挑戦をカレンダーに。復習のタイミングも、自動で調整します。</p></div><button id="home-records" class="wood-button">学習の記録を見る →</button></section>
+    ${!accountStore.user ? '<section class="home-account-callout"><div><b>学びの続きを、どこからでも。</b><p>ログインすると、学習記録をアカウントに保存できます。</p></div><button id="home-login" class="plain-button">ログイン / 新規登録 →</button></section>' : accountStore.canImportGuest() ? '<section class="home-account-callout"><div><b>これまでの学習記録が見つかりました。</b><p>ログイン前の記録を、このアカウントに引き継げます。</p></div><button id="home-login" class="plain-button">記録を引き継ぐ →</button></section>' : ''}`;
+  $('#start-study').onclick = () => { initAudio(); phase = 'study'; studyUI.open(); };
+  $('#start-menu').onclick = () => { initAudio(); menu(); };
+  screen.querySelectorAll('[data-home-deck]').forEach(button => button.onclick = () => { initAudio(); phase = 'study'; studyUI.openDeck(button.dataset.homeDeck); });
+  $('#home-records').onclick = () => $('#history-button').onclick();
+  if ($('#home-login')) $('#home-login').onclick = () => $('#account-button').onclick();
+}
+function menu() {
+  cancelCountdown(); phase = 'menu'; game = null;
+  screen.className = 'screen menu-screen';
+  screen.innerHTML = `
+    <div class="screen-heading"><span class="stamp">お品書き</span><div><p>CHOOSE YOUR COURSE</p><h1>コースを選んでください</h1></div></div>
+    <div class="mode-tabs" role="group" aria-label="難易度">${Object.entries(MODES).map(([key, value]) => `<button data-mode="${key}" aria-pressed="${mode === key}" class="${mode === key ? 'selected' : ''}">${value.name}</button>`).join('')}</div>
+    <p class="mode-description" id="mode-description">${MODES[mode].description}</p>
+    <div class="course-list">${Object.entries(COURSES).map(([key, value]) => {
+      const best = bests[`${key}:${mode}:keyboard`];
+      return `<button class="course-card course-${key}" data-course="${key}" aria-label="${value.name} ${yen(value.price)}円コース ${value.seconds}秒"><span class="course-en">${value.en}</span><h2>${value.name}</h2><div class="course-art">${sushi(value.sushi, key === 'easy' ? 2 : key === 'normal' ? 3 : 5)}</div><strong>${yen(value.price)}<small>円コース</small></strong><span class="course-range">${value.subtitle} · ${value.range}文字</span><span class="course-time">制限時間 <b>${value.seconds}</b> 秒</span><span class="course-best">${Number.isFinite(best) ? `自己ベスト ${best < 0 ? '−' : '+'}${yen(best)}円` : 'はじめての記録をつくろう'}</span><span class="course-play">このコースで遊ぶ →</span></button>`;
+    }).join('')}</div>
+    <div class="menu-bottom"><button id="back-title" class="plain-button">‹ タイトルへ戻る</button><span>英字の大文字・小文字はどちらでもOK。空白はスペースキー。</span></div>`;
+  screen.querySelectorAll('[data-mode]').forEach(button => button.onclick = () => { mode = button.dataset.mode; menu(); });
+  screen.querySelectorAll('[data-course]').forEach(button => button.onclick = () => { course = button.dataset.course; ready(); });
+  $('#back-title').onclick = title;
+}
+function plateShelf(counts = {}) {
+  return `<div class="plate-shelf">${PRICES.map((value, i) => `<div class="shelf-item"><div class="mini-sushi">${sushi(TYPES[i], i)}</div><span class="shelf-price">${yen(value)}円</span><b id="count-${value}">${counts[value] || 0}<small> 皿</small></b></div>`).join('')}</div>`;
+}
+function ready() {
+  cancelCountdown();
+  game = new TypingGame(course, mode, PHRASES[course]);
+  touchUsed = false; displayedPhrase = null; renderedIndex = -1; phase = 'ready';
+  screen.className = 'screen play-screen';
+  screen.innerHTML = `
+    <div class="game-hud"><div class="clock-box"><span>残り時間</span><strong id="time">${COURSES[course].seconds}</strong><small>秒</small></div><div class="combo-box"><div class="combo-label"><span>連続タイプ <b id="combo">0</b></span><small>30連打ごとに +2秒</small></div><div class="combo-track"><i id="combo-fill"></i><span>TIME BONUS</span></div></div><button id="pause-button" class="pause-button" aria-label="一時停止">Ⅱ</button></div>
+    <div class="shop-wall"><span class="wall-label">ENGLISH ONLY</span><div class="wall-menu"><span>鮪</span><span>海老</span><span>玉子</span><span>鮭</span></div><span class="shop-mark">寿司<br>タイプ</span></div>
+    <div class="conveyor"><div class="conveyor-back"></div><div id="moving-plate" class="moving-plate">${sushi('tuna', 3)}</div><div class="conveyor-front"></div><div class="rail-shadow"></div><div id="plate-gain" class="plate-gain"></div></div>
+    <div class="counter"><div class="tea-cup" aria-hidden="true"><i></i><span>寿司</span></div><div class="sauce-dish" aria-hidden="true"></div><div id="eaten-stack" class="eaten-stack" aria-hidden="true"></div><div class="prompt-area" id="prompt-area"><p id="translation" class="translation"></p><div id="english-prompt" class="english-prompt" aria-label="入力する英文"></div><p class="input-note" id="input-note">半角英数で入力 · ミスしても消さずに続けてOK</p></div><div id="bonus-notice" class="bonus-notice" aria-live="polite"></div></div>
+    <div class="plate-time"><i id="plate-time-fill"></i></div>
+    <div class="game-status"><span>${COURSES[course].name} ${yen(COURSES[course].price)}円コース <b>【${MODES[mode].name}】</b></span><strong><span id="score">0</span> 円分 <small>ゲット！</small></strong></div>
+    ${plateShelf()}
+    <div id="virtual-keyboard" class="virtual-keyboard" ${settings.keyboard ? '' : 'hidden'}>${['qwertyuiop', 'asdfghjkl', 'zxcvbnm'].map(row => `<div>${[...row].map(key => `<button data-key="${key}" aria-label="${key}">${key}</button>`).join('')}</div>`).join('')}<div><button data-key=" " class="space-key" aria-label="スペース">SPACE</button></div></div>
+    <div id="game-overlay" class="game-overlay"><div class="overlay-card"><span class="overlay-kicker">${COURSES[course].en} COURSE · ${MODES[mode].name}</span><h2>準備はいいですか？</h2><p>お皿の英文を、最後まで打ち切ろう。</p><button id="start-game" class="red-button">スペース / Enter で開始 <span>▶</span></button><p class="overlay-note">日本語入力はOFFにしてください。</p><button id="ready-back" class="plain-button">コース選択へ戻る</button></div></div>`;
+  $('#start-game').onclick = startCountdown;
+  $('#ready-back').onclick = menu;
+  $('#pause-button').onclick = pause;
+  screen.querySelectorAll('[data-key]').forEach(button => {
+    button.onpointerdown = event => { event.preventDefault(); touchUsed = true; typeKey(button.dataset.key); };
+  });
+  draw();
+}
+function startCountdown() {
+  if (phase !== 'ready') return;
+  initAudio(); phase = 'countdown';
+  let count = 3;
+  $('#game-overlay').innerHTML = '<div class="countdown-number">3</div>';
+  sound('start');
+  countdownTimer = setInterval(() => {
+    count--;
+    if (count === 0) {
+      cancelCountdown(); game.start(); phase = 'playing'; lastTick = performance.now();
+      $('#game-overlay').hidden = true;
+      $('#announcement').textContent = 'スタート。' + game.phrase.text;
+    } else { $('.countdown-number').textContent = count; sound('start'); }
+  }, 1000);
+}
+function syncTime(now = performance.now()) {
+  if (phase !== 'playing') return;
+  game.advance(Math.max(0, (now - lastTick) / 1000)); lastTick = now;
+  if (game.status === 'ended') finish();
+}
+function typeKey(key) {
+  if (phase !== 'playing') return;
+  syncTime();
+  if (phase !== 'playing') return;
+  const result = game.type(key);
+  if (result.kind === 'ignored') return;
+  sound(result.kind === 'key' ? 'key' : result.kind);
+  if (result.kind === 'miss') {
+    $('#prompt-area').classList.remove('mistake');
+    void $('#prompt-area').offsetWidth;
+    $('#prompt-area').classList.add('mistake');
+    $('#announcement').textContent = mode === 'accuracy' ? 'ミスタイプ。入力が最初に戻ります。' : 'ミスタイプ';
+  }
+  if (result.kind === 'plate') {
+    const gain = $('#plate-gain'); gain.textContent = `+${yen(result.value)}円`;
+    gain.classList.remove('pop'); void gain.offsetWidth; gain.classList.add('pop');
+    $('#announcement').textContent = `${result.value}円のお皿をゲット。次は ${game.phrase.text}`;
+  }
+  if (result.bonus) {
+    sound('bonus'); $('#bonus-notice').textContent = 'TIME BONUS +2秒';
+    setTimeout(() => { const notice = $('#bonus-notice'); if (notice) notice.textContent = ''; }, 1300);
+  }
+  if (game.status === 'ended') finish(); else draw();
+}
+function draw() {
+  if (!game || !['ready', 'countdown', 'playing', 'paused'].includes(phase)) return;
+  $('#time').textContent = Math.ceil(game.remaining);
+  $('.clock-box').classList.toggle('urgent', game.remaining <= 10);
+  $('#combo').textContent = game.combo;
+  $('#combo-fill').style.width = `${game.combo % BONUS_EVERY / BONUS_EVERY * 100}%`;
+  $('#score').textContent = yen(game.score);
+  const progress = game.plateElapsed / game.plateDuration;
+  $('#moving-plate').style.left = `${105 - progress * 120}%`;
+  $('#plate-time-fill').style.width = `${(1 - progress) * 100}%`;
+  $('#plate-time-fill').classList.toggle('danger', progress > 0.75);
+  const newPhrase = displayedPhrase !== game.phrase;
+  if (newPhrase) {
+    displayedPhrase = game.phrase;
+    const tier = PRICES.indexOf(game.value);
+    $('#moving-plate').innerHTML = sushi(TYPES[tier], tier) + `<span class="moving-price">${game.value}円</span>`;
+  }
+  if (newPhrase || renderedTranslation !== settings.translation) {
+    $('#translation').textContent = settings.translation ? game.phrase.translation : '';
+    renderedTranslation = settings.translation;
+  }
+  if (newPhrase || renderedIndex !== game.index) $('#english-prompt').innerHTML = `<span class="typed">${escape(game.phrase.text.slice(0, game.index))}</span><span class="next-letter">${escape(game.phrase.text[game.index]).replace(' ', '␣')}</span><span>${escape(game.phrase.text.slice(game.index + 1))}</span>`;
+  renderedIndex = game.index;
+  for (const price of PRICES) {
+    const count = $(`#count-${price}`);
+    if (count.dataset.count !== String(game.counts[price])) {
+      count.innerHTML = `${game.counts[price]}<small> 皿</small>`;
+      count.dataset.count = game.counts[price];
+    }
+  }
+  const eaten = Object.values(game.counts).reduce((sum, n) => sum + n, 0);
+  const stack = $('#eaten-stack');
+  if (stack.dataset.count !== String(eaten)) {
+    stack.innerHTML = Array.from({ length: Math.min(8, eaten) }, (_, i) => `<i style="bottom:${i * 5}px"></i>`).join('');
+    stack.dataset.count = eaten;
+  }
+}
+function pause(reason = 'manual') {
+  if (phase !== 'playing') return;
+  syncTime(); if (phase !== 'playing') return;
+  game.pause(); phase = 'paused';
+  $('#game-overlay').hidden = false;
+  $('#game-overlay').innerHTML = `<div class="overlay-card"><span class="overlay-kicker">TAKE A LITTLE BREAK</span><h2>一時停止中</h2><p>${reason === 'ime' ? '日本語入力をOFFにして、半角英数に切り替えてください。' : 'お寿司も、時計も止まっています。'}</p><button id="resume" class="red-button">続ける <span>▶</span></button><button id="end-game" class="plain-button">ここで終了する</button></div>`;
+  $('#resume').onclick = resume;
+  $('#end-game').onclick = () => { game.end('exit'); finish(); };
+  $('#resume').focus();
+}
+function resume() {
+  if (phase !== 'paused' || $('#dialog').open) return;
+  game.resume(); phase = 'playing'; lastTick = performance.now();
+  $('#game-overlay').hidden = true;
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+}
+function finish() {
+  if (phase === 'result') return;
+  phase = 'result'; cancelCountdown();
+  if (game.correct > 0) sound('finish');
+  const result = { ...game.result(), at: Date.now(), touch: touchUsed };
+  const bestKey = `${course}:${mode}:${touchUsed ? 'touch' : 'keyboard'}`;
+  const eligible = result.reason !== 'exit' && result.correct > 0;
+  const isBest = eligible && (!Number.isFinite(bests[bestKey]) || result.net > bests[bestKey]);
+  if (isBest) bests[bestKey] = result.net;
+  if (result.correct + result.misses > 0) { history.unshift(result); history = history.slice(0, 50); persist(); }
+  const reason = { time: '制限時間終了', escaped: 'お皿が流れてしまいました', miss: 'ミスタイプで終了', exit: '途中終了' }[result.reason];
+  screen.className = 'screen result-screen';
+  screen.innerHTML = `
+    <div class="result-heading"><span class="result-kicker">${COURSES[course].name} ${yen(COURSES[course].price)}円コース【${MODES[mode].name}】</span><h1>結果発表</h1><p>${reason}</p></div>
+    <div class="receipt-intro">${yen(COURSES[course].price)}円のお支払いで、<br><strong>${yen(result.score)}円分</strong>のお寿司を食べました。</div>
+    <div class="net-result ${result.net >= 0 ? 'profit' : 'loss'}"><b>${yen(result.net)}</b><span>円分 ${result.net >= 0 ? 'お得でした！' : '足りませんでした…'}</span>${isBest ? '<small class="new-best">NEW PERSONAL BEST</small>' : ''}</div>
+    <div class="result-details"><div><span>正しく打ったキー</span><strong>${result.correct}<small> 回</small></strong></div><div><span>平均キータイプ数</span><strong>${result.speed.toFixed(1)}<small> 回 / 秒</small></strong></div><div><span>ミスタイプ</span><strong>${result.misses}<small> 回</small></strong></div><div><span>正確率</span><strong>${result.accuracy.toFixed(1)}<small> %</small></strong></div><div><span>食べたお皿 / 逃したお皿</span><strong>${result.plates}<small> 皿 / </small>${result.skipped}<small> 皿</small></strong></div><div><span>最高連続 / 時間ボーナス</span><strong>${result.maxCombo}<small> 打 / +</small>${result.bonus}<small> 秒</small></strong></div></div>
+    <div class="result-actions"><button id="retry" class="red-button">もう一回！ <small>Space / Enter</small></button><button id="choose-course" class="wood-button">コースを選び直す</button><button id="copy-result" class="plain-button">結果をコピー</button></div>
+    ${plateShelf(result.counts)}<p class="result-note">${touchUsed ? '画面キーボードでの入力を含む記録です。' : 'キーボード入力の記録です。'}${result.reason === 'exit' ? '途中終了は自己ベストに含まれません。' : ''}${storageAvailable ? '自己ベストと直近50回の記録を、このブラウザに保存します。' : 'このブラウザには記録を保存できません。'}</p>`;
+  $('#retry').onclick = ready;
+  $('#choose-course').onclick = menu;
+  $('#copy-result').onclick = async () => {
+    const text = `寿司タイプ ENGLISH｜${COURSES[course].name} ${yen(COURSES[course].price)}円【${MODES[mode].name}】\n${yen(result.score)}円分食べて${yen(result.net)}円分${result.net >= 0 ? 'お得' : '不足'}！ ${result.speed.toFixed(1)}打/秒・ミス${result.misses}回\n${location.origin}`;
+    try { await navigator.clipboard.writeText(text); toast('結果をコピーしました。'); }
+    catch { toast('コピーできませんでした。ブラウザのクリップボード権限をご確認ください。'); }
+  };
+}
+function openDialog(title, html) {
+  if (phase === 'study') studyUI.pause();
+  if (phase === 'playing') pause();
+  if (phase === 'countdown') ready();
+  $('#dialog-title').textContent = title;
+  $('#dialog-body').innerHTML = html;
+  if (!$('#dialog').open) $('#dialog').showModal();
+}
+$('#help-button').onclick = () => openDialog('遊び方', `
+  <p class="dialog-lead">学習モードは、頭文字と空欄から思い出してタイプ。</p><p class="small-note">お手軽＝単語・お勧め＝短い組み合わせ・高級＝例文。同じ位置で2回ミスすると1文字表示されます。正解で即次へ。自動の答え表示中もコース時計が進み、保留・一時停止中は止まります。追加ヒントなしで3皿続けると音とゲージでお祝い。追加ヒントや時間切れの問題は短い間隔で復習します。以下は「タイピングだけで遊ぶ」のルールです。</p>
+  <ol class="help-list"><li><b>コースと難易度を選ぶ</b><p>3,000円・5,000円・10,000円の3コース。金額はゲームの目標です。</p></li><li><b>表示された英語を、そのまま入力</b><p>半角英数で1文字ずつ。大文字・小文字はどちらでもOK。単語の間はスペースを打ちます。Enterでの送信やBackspaceでの修正は不要です。</p></li><li><b>打ち切って、お皿をゲット</b><p>流れてしまうとそのお皿の得点は入りません。30文字連続でミスなく打つと、残り時間が2秒増えます。</p></li><li><b>目指せ、元取り！</b><p>食べたお皿の合計 − コース金額がお得になった金額です。結果ではキータイプ数やミスも確認できます。</p></li></ol>
+  <div class="help-modes">${Object.values(MODES).map(value => `<p><b>${value.name}</b><span>${value.description}</span></p>`).join('')}</div><p class="small-note">Escで一時停止。タブやウィンドウを離れたときも自動停止します。スマホでは設定から画面キーボードをONにしてください。</p>`);
+$('#settings-button').onclick = () => {
+  openDialog('設定', `<div class="settings-list"><label><span><b>サウンド</b><small>打鍵・ミス・完答・連続完答で音が変わります</small></span><input type="checkbox" id="setting-sound" ${settings.sound ? 'checked' : ''}></label><label class="sound-volume-label" for="setting-volume"><span><b>音量 <output id="sound-volume-value">${Math.round(settings.volume * 100)}%</output></b><small>ボタン音・効果音すべてに適用</small></span><input type="range" id="setting-volume" min="0" max="100" step="5" value="${Math.round(settings.volume * 100)}"></label><div class="sound-preview"><span>音を試す</span><div>${[['click', 'ボタン'], ['key', '打鍵'], ['miss', 'ミス'], ['hint', '文字ヒント'], ['plate', '完答'], ['promote', '連続完答'], ['demote', '学び直し'], ['finish', '終了']].map(([kind, label]) => `<button class="wood-button" data-sound-preview="${kind}">${label}</button>`).join('')}</div></div><label><span><b>日本語の意味を表示</b><small>タイピングモードの英文の上に日本語を表示します</small></span><input type="checkbox" id="setting-translation" ${settings.translation ? 'checked' : ''}></label><label><span><b>画面キーボード</b><small>タイピングモードでタップして遊べます</small></span><input type="checkbox" id="setting-keyboard" ${settings.keyboard ? 'checked' : ''}></label></div><p class="small-note">音量・表示設定は学習記録といっしょに保存されます。</p>`);
+  for (const key of ['sound', 'translation', 'keyboard']) $(`#setting-${key}`).onchange = event => {
+    settings[key] = event.target.checked; persist(); syncSound(); updateSoundStatus(); initAudio();
+    if ($('#virtual-keyboard')) $('#virtual-keyboard').hidden = !settings.keyboard;
+    draw();
+  };
+  $('#setting-volume').oninput = event => {
+    settings.volume = Number(event.target.value) / 100;
+    $('#sound-volume-value').textContent = `${Math.round(settings.volume * 100)}%`;
+    syncSound(); persist();
+  };
+  document.querySelectorAll('[data-sound-preview]').forEach(button => button.onclick = () => sound(button.dataset.soundPreview));
+  syncSound();
+};
+$('#history-button').onclick = () => {
+  if (phase === 'study') studyUI.pause();
+  openDialog('これまでの記録', studyUI.activityMarkup() + '<h3 class="history-section-title">タイピングゲームの記録</h3>' + (history.length ? `<p class="small-note">直近50回。キーボードとタッチの自己ベストは別に集計します。</p><div class="history-list">${history.map(row => `<article><div><b>${COURSES[row.course].name} ${yen(COURSES[row.course].price)}円</b><span>${MODES[row.mode].name} · ${new Date(row.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${row.touch ? ' · タッチ' : ''}${row.reason === 'exit' ? ' · 途中終了' : ''}</span></div><strong class="${row.net >= 0 ? 'positive' : ''}">${row.net < 0 ? '−' : '+'}${yen(row.net)}<small> 円</small></strong></article>`).join('')}</div>` : '<div class="history-empty">まだ記録がありません。<br>まずはひと皿、食べてみましょう。</div>'));
+};
+$('#close-dialog').onclick = () => $('#dialog').close();
+$('#home-link').onclick = event => {
+  event.preventDefault();
+  if (phase === 'study' && !studyUI.leave()) return;
+  if (phase === 'playing') pause();
+  if (game && ['paused', 'countdown'].includes(phase) && !confirm('タイトルへ戻りますか？今回のプレイは終了します。')) return;
+  title();
+};
+document.addEventListener('keydown', event => {
+  if (phase === 'study') { if (!$('#dialog').open) studyUI.handleKey(event); return; }
+  if ($('#dialog').open || event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+  if (event.isComposing || event.keyCode === 229) {
+    if (phase === 'playing') pause('ime');
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (phase === 'playing') pause(); else if (phase === 'paused') resume();
+    return;
+  }
+  if (event.target.closest?.('header, footer, dialog, .cabinet-foot')) return;
+  if (!['playing', 'paused'].includes(phase) && event.target.closest?.('button, a, input')) return;
+  if ([' ', 'Enter'].includes(event.key) && ['title', 'ready', 'result'].includes(phase)) {
+    event.preventDefault(); initAudio();
+    if (phase === 'title') { phase = 'study'; studyUI.open(); } else if (phase === 'ready') startCountdown(); else ready();
+    return;
+  }
+  if (phase === 'playing' && event.key.length === 1) { event.preventDefault(); typeKey(event.key); }
+});
+document.addEventListener('compositionstart', () => { if (phase === 'playing') pause('ime'); });
+function onLeave() {
+  if (phase === 'study') { studyUI.pause(); return; }
+  if (phase === 'playing') pause();
+  else if (phase === 'countdown') ready();
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) onLeave(); });
+window.addEventListener('blur', onLeave);
+function frame(now) {
+  if (phase === 'study') studyUI.frame(now);
+  if (phase === 'playing') { syncTime(now); if (phase === 'playing') draw(); }
+  requestAnimationFrame(frame);
+}
+// Capture dynamic menu buttons once; touch keys already have their own sound.
+document.addEventListener('click', event => {
+  const button = event.target.closest?.('button');
+  if (!button || button.disabled || ['sound-toggle', 'study-hint', 'study-reveal'].includes(button.id) || button.hasAttribute('data-key') || button.hasAttribute('data-sound-preview') || !settings.sound) return;
+  sound('click');
+}, true);
+updateSoundStatus(); title(); requestAnimationFrame(frame);
+mountAccountUI({ auth: authController, store: accountStore, openDialog, escape, toast });

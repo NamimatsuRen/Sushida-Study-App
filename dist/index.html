@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#21b3a3">
+  <meta name="description" content="頭文字と空欄から英語を思い出す。単語・熟語・例文の3コースで遊び、ヒントの記録と間隔復習で学ぶ寿司タイピング。">
+  <title>寿司タイプ ENGLISH — 思い出して、覚える。</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="learning.css">
+</head>
+<body>
+  <div class="site-wrap">
+    <header class="site-header">
+      <a href="#" id="home-link" class="wordmark">寿司タイプ <span>ENGLISH</span></a>
+      <div class="header-tools">
+        <button id="help-button">遊び方</button>
+        <button id="history-button">記録</button>
+        <button id="settings-button" aria-label="設定">⚙ 設定</button>
+        <button id="account-button" class="account-button">ログイン</button>
+      </div>
+    </header>
+    <main id="cabinet" class="cabinet" aria-label="英語タイピングゲーム">
+      <div class="wood-frame"><div id="screen" class="screen"><p class="boot-message">学習の準備をしています…</p></div></div>
+      <div class="cabinet-foot"><span id="account-status">ゲストで学習中</span><span id="sound-status"></span></div>
+    </main>
+    <div class="under-game"><p><kbd>Space</kbd> / <kbd>Enter</kbd> でスタート <span>·</span> <kbd>Esc</kbd> で一時停止</p><p>日本語入力をOFFにして、半角英数でどうぞ。</p></div>
+    <footer><span>寿司タイプ ENGLISH</span><p>寿司打に着想を得た個人制作の英語版タイピングゲームです。公式版とは異なります。<br>金額はゲーム内のスコアです。お支払いは発生しません。ゲストの記録はこの端末、ログイン後はアカウントに保存します。</p><a href="https://sushida.net/" target="_blank" rel="noopener">本家「寿司打」↗</a></footer>
+  </div>
+  <dialog id="dialog"><div class="dialog-top"><h2 id="dialog-title"></h2><button id="close-dialog" class="close-button" aria-label="閉じる">×</button></div><div id="dialog-body"></div></dialog>
+  <div id="toast" role="status"></div><div id="announcement" class="sr-only" aria-live="polite"></div>
+  <script type="module" src="bootstrap.js"></script>
+</body>
+</html>
