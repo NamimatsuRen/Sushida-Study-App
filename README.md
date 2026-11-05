@@ -95,6 +95,12 @@ Google・メールのログイン、新規登録、パスワード再設定に�
 
 未実装のアイデアと検討事項は[ロードマップ](docs/roadmap.md)に記録しています。
 
+## 独立した育成プロトタイプ
+
+[へんてこ水族館を試す](https://typequarium-ren-lab.namimatsuren.chatgpt.site)（所有者限定）。20秒のタイピングで稼ぎ、魚・おじさん・宇宙人などを迎えて育てる単体アプリです。入力・思い出しの特徴や仲間の構成で、水槽の雰囲気と客層が変わります。
+
+コードと試し方は[experiments/typequarium-lab](experiments/typequarium-lab/README.md)。元の学習アプリとのデータ連携はありません。
+
 ## 実行と検証
 
 `dist/` を静的配信します。FSRS・Supabase SDKとライセンスを同梱し、実行時のCDNは不要。FSRSは端末内で計算し、ログイン・同期時にSupabaseへ通信します。通常の配信にビルドは不要です。
