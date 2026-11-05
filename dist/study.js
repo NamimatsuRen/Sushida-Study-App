@@ -1,6 +1,7 @@
 import { addStudyActivity, restoreStudyActivity, renderStudyActivity, studyActivityView } from './activity.js';
 import { STUDY_DECKS } from './study-cards.js';
 import { StudyRound, planStudy, introduceStudy, recordStudy, delayedStudyStats, validStudyProgress, parseStudyMarkdown, STUDY_PRICES } from './study-core.js';
+import { FSRS_ENGINE, FSRS_CONFIG, FSRS_LIBRARY_VERSION } from './study-scheduler.js';
 
 export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }) {
   let studyState = { progress: {}, logs: [], activity: {}, custom: null };
@@ -10,20 +11,21 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
     if (saved) {
-      studyState.progress = validStudyProgress(saved.progress);
       if (Array.isArray(saved.logs)) studyState.logs = saved.logs.filter(log => log && typeof log.id === 'string' && ['recalled', 'assisted', 'forgot'].includes(log.outcome) && Number.isFinite(log.at)).slice(-2000);
+      studyState.progress = validStudyProgress(saved.progress, studyState.logs);
       studyState.activity = restoreStudyActivity(saved.activity, studyState.logs);
       if (typeof saved.markdown === 'string') {
         const parsed = parseStudyMarkdown(saved.markdown);
         if (!parsed.errors.length) studyState.custom = { ...parsed, id: 'custom', label: '自分の問題', description: 'ノートを小さな問いに変えて、思い出す。', sushi: 'egg', markdown: saved.markdown };
       }
+      if (saved.version !== 3 || JSON.stringify(saved.progress) !== JSON.stringify(studyState.progress)) save();
     }
   } catch { toast('学習記録を読み込めませんでした。保存設定をご確認ください。'); }
   const studyAllDecks = () => studyState.custom ? [...STUDY_DECKS, studyState.custom] : STUDY_DECKS;
   const q = selector => screen.querySelector(selector);
   function save() {
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ version: 2, activity: studyState.activity, progress: studyState.progress, logs: studyState.logs.slice(-2000), markdown: studyState.custom?.markdown || '' }));
+      localStorage.setItem(storageKey, JSON.stringify({ version: 3, scheduler: { engine: FSRS_ENGINE, libraryVersion: FSRS_LIBRARY_VERSION, requestRetention: FSRS_CONFIG.request_retention }, activity: studyState.activity, progress: studyState.progress, logs: studyState.logs.slice(-2000), markdown: studyState.custom?.markdown || '' }));
       return true;
     } catch { toast('学習記録を保存できません。ブラウザのストレージ設定をご確認ください。'); return false; }
   }
@@ -66,6 +68,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     q('#study-back').onclick = menu;
     if (q('#study-extra')) q('#study-extra').onclick = () => prepare(deck, true);
     if (q('#study-begin')) q('#study-begin').onclick = () => {
+      plan = planStudy(deck.cards, studyState.progress, Date.now(), extra);
       round = new StudyRound(plan.entries, studyState.progress, { seconds: deck.seconds || 90, plateSeconds: deck.plateSeconds || 6, cueMode: q('#study-probe').checked ? 'none' : 'initial-and-length', continuous: true }); award = 0; lastOutcome = null; advanceAt = null; question();
     };
   }
@@ -240,7 +243,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
     route = 'method';
     screen.className = 'screen study-screen';
     screen.innerHTML = `${header('WHY THIS WAY?', '覚える仕組み、楽しむ仕掛け。')}
-      <div class="study-method"><article><h2>1. 見て打つ前に、思い出す</h2><p>日本語や場面から答えを取り出します。頭文字・文字数は見せ、2回ミスすると現在の文字を追加表示します。追加のヒントを使った回答は分けて記録します。別に「手掛かりなしで確認」も選べます。</p><a href="https://doi.org/10.1126/science.1152408" target="_blank" rel="noopener">Karpicke & Roediger（2008）↗</a></article><article><h2>2. 少し忘れた頃に、また会う</h2><p>期限の来た問題を優先します。この試作は成功時1・3・7・14・30・60日、忘れた／ヒントを使ったときは10分後という簡易方式です。AnkiのFSRSではなく、間隔は今後調整する仮設定です。</p><a href="https://doi.org/10.1111/lang.12479" target="_blank" rel="noopener">Kim & Webb（2022）↗</a></article><article><h2>3. 使う方向に、練習する</h2><p>お手軽は単語、お勧めは短い組み合わせ、高級は例文。レベルごとの復習記録を分け、単語の正解だけで文章も覚えたとは判断しません。</p><a href="https://www.jstage.jst.go.jp/article/katejournal/30/0/30_11/_article/-char/en" target="_blank" rel="noopener">Yanagisawa（2016）↗</a></article><article><h2>4. 手助けと締め切りで、挑戦を支える</h2><p>寿司・音・制限時間を残し、自動の答え表示中もコース時計を進めます。保留や一時停止中は止まります。頭文字の表示・2回ミスで1文字・時間の長さが適切かは、楽しさと後日の正答で検証する仮説です。</p><a href="https://doi.org/10.1007/s10648-019-09498-w" target="_blank" rel="noopener">Sailer & Homner（2020）↗</a></article></div><p class="study-footnote">文字ヒント付き練習から、ヒントなしの後日テストへの転移は限定的だった研究もあります。追加ヒントなしの成績と、手掛かりなしの確認を分けて見ることが大切です。<a href="https://pubmed.ncbi.nlm.nih.gov/30998028/" target="_blank" rel="noopener">van den Broek et al.（2019）</a></p><button id="study-method-back" class="wood-button study-main-action">学習メニューへ戻る</button>`;
+      <div class="study-method"><article><h2>1. 見て打つ前に、思い出す</h2><p>日本語や場面から答えを取り出します。頭文字・文字数は見せ、2回ミスすると現在の文字を追加表示します。追加のヒントを使った回答は分けて記録します。別に「手掛かりなしで確認」も選べます。</p><a href="https://doi.org/10.1126/science.1152408" target="_blank" rel="noopener">Karpicke & Roediger（2008）↗</a></article><article><h2>2. 少し忘れた頃に、また会う</h2><p>期限の来た問題を優先し、FSRSで問題ごとの復習時期を自動調整します。前回からの時間と回答結果から、記憶の安定度・難しさを更新。初回・期限の来た復習では、追加ヒントなしの完答を成功として扱います。ヒント使用・答え表示・時間切れは学び直しとし、10分後に復習します。目標保持率は90%ですが、実際の正答率を保証する値ではありません。周回中の解き直し・期限前の追加練習では復習予定を変えません。</p><a href="https://docs.ankiweb.net/manual/deck-options#fsrs" target="_blank" rel="noopener">FSRSの仕組み（Anki公式）↗</a></article><article><h2>3. 使う方向に、練習する</h2><p>お手軽は単語、お勧めは短い組み合わせ、高級は例文。レベルごとの復習記録を分け、単語の正解だけで文章も覚えたとは判断しません。</p><a href="https://www.jstage.jst.go.jp/article/katejournal/30/0/30_11/_article/-char/en" target="_blank" rel="noopener">Yanagisawa（2016）↗</a></article><article><h2>4. 手助けと締め切りで、挑戦を支える</h2><p>寿司・音・制限時間を残し、自動の答え表示中もコース時計を進めます。保留や一時停止中は止まります。頭文字の表示・2回ミスで1文字・時間の長さが適切かは、楽しさと後日の正答で検証する仮説です。</p><a href="https://doi.org/10.1007/s10648-019-09498-w" target="_blank" rel="noopener">Sailer & Homner（2020）↗</a></article></div><p class="study-footnote">文字ヒント付き練習から、ヒントなしの後日テストへの転移は限定的だった研究もあります。追加ヒントなしの成績と、手掛かりなしの確認を分けて見ることが大切です。<a href="https://pubmed.ncbi.nlm.nih.gov/30998028/" target="_blank" rel="noopener">van den Broek et al.（2019）</a></p><button id="study-method-back" class="wood-button study-main-action">学習メニューへ戻る</button>`;
     q('#study-method-back').onclick = menu;
   }
   function importMenu() {

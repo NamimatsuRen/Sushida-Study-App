@@ -1,6 +1,6 @@
-// Transparent prototype scheduler. This is not Anki's FSRS algorithm.
+import { FSRS_ENGINE, newStudyMemory, reviewStudyMemory, restoreStudyMemory, validStudyTimestamp } from './study-scheduler.js';
+
 export const STUDY_DAY = 86400000;
-export const STUDY_STEPS = [1, 3, 7, 14, 30, 60];
 export const STUDY_RELEARN = 10 * 60000;
 export const normalizeStudy = text => String(text).normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ').replace(/[.!?。！？]+$/g, '');
 export const matchesStudy = (answer, accepted) => accepted.some(value => normalizeStudy(value) === normalizeStudy(answer));
@@ -54,38 +54,37 @@ export function planStudy(cards, progress, now, extra = false) {
 export function introduceStudy(progress, entries, now) {
   const next = { ...progress };
   for (const { card, kind } of entries) if (kind === 'new' && !next[card.id]) next[card.id] = {
-    stage: 0, due: now, introducedAt: now, lastReviewedAt: 0, attempts: 0, successes: 0, lapses: 0,
+    due: now, introducedAt: now, lastReviewedAt: 0, attempts: 0, successes: 0, lapses: 0, fsrs: newStudyMemory(now),
   };
   return next;
 }
 export function recordStudy(progress, event, now) {
   const previous = progress[event.id];
   if (!previous) throw new Error('Card must be introduced before review');
-  const log = { ...event, at: now };
+  const log = { ...event, at: now, scheduled: false };
   // Retries and optional early practice never change a scheduled review.
-  if (event.kind === 'retry' || event.kind === 'extra') return { progress, log };
-  const canAdvance = previous.due <= now;
+  if (!['new', 'review'].includes(event.kind) || previous.due > now || !validStudyTimestamp(now) || now < previous.lastReviewedAt) return { progress, log };
   const recalled = event.outcome === 'recalled';
+  const reviewed = reviewStudyMemory(restoreStudyMemory(previous, event.id), event.outcome, now);
   const next = { ...previous, attempts: previous.attempts + 1, successes: previous.successes + Number(recalled),
-    lapses: previous.lapses + Number(!recalled), lastReviewedAt: now };
-  if (!recalled) { next.stage = 0; next.due = now + STUDY_RELEARN; }
-  else if (canAdvance) {
-    next.stage = Math.min(STUDY_STEPS.length, previous.stage + 1);
-    next.due = now + STUDY_STEPS[next.stage - 1] * STUDY_DAY;
-  }
+    lapses: previous.lapses + Number(!recalled), lastReviewedAt: now, fsrs: reviewed.memory, due: reviewed.memory.due };
+  Object.assign(log, { scheduled: true, scheduler: FSRS_ENGINE, rating: reviewed.rating, nextDue: next.due, fsrsLog: reviewed.log });
   return { progress: { ...progress, [event.id]: next }, log };
 }
 export function delayedStudyStats(logs) {
-  const eligible = logs.filter(log => log.kind === 'review' && log.delayed === true);
+  const eligible = logs.filter(log => log.kind === 'review' && log.delayed === true && log.scheduled !== false);
   const scaffolded = eligible.filter(log => log.cue === 'initial-and-length');
   const uncued = eligible.filter(log => log.cue === 'none');
   return { correct: scaffolded.filter(log => log.outcome === 'recalled').length, total: scaffolded.length, freeCorrect: uncued.filter(log => log.outcome === 'recalled').length, freeTotal: uncued.length };
 }
-export function validStudyProgress(value) {
+export function validStudyProgress(value, logs = []) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item &&
-    ['due', 'introducedAt', 'lastReviewedAt', 'attempts', 'successes', 'lapses', 'stage'].every(key => Number.isFinite(item[key]) && item[key] >= 0) &&
-    Number.isInteger(item.stage) && item.stage <= STUDY_STEPS.length));
+    ['due', 'introducedAt', 'lastReviewedAt'].every(key => validStudyTimestamp(item[key])) &&
+    ['attempts', 'successes', 'lapses'].every(key => Number.isSafeInteger(item[key]) && item[key] >= 0) &&
+    item.successes + item.lapses === item.attempts && item.due >= item.lastReviewedAt &&
+    (item.stage === undefined || Number.isInteger(item.stage) && item.stage >= 0 && item.stage <= 6))
+    .map(([id, item]) => { const fsrs = restoreStudyMemory(item, id, logs); return [id, { ...item, fsrs, due: fsrs.due }]; }));
 }
 
 export class StudyRound {

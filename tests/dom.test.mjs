@@ -3,11 +3,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import * as FSRS from '../dist/vendor/ts-fsrs.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 function setup(saved = null, learningSaved = null, mockAudio = false) {
   const dom = new JSDOM(readFileSync(root + 'dist/index.html', 'utf8'), { url: 'https://example.test', runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window;
+  w.FSRS = FSRS;
   let now = 0, raf, intervalId = 0;
   const intervals = new Map();
   w.performance.now = () => now;
@@ -29,7 +31,7 @@ function setup(saved = null, learningSaved = null, mockAudio = false) {
   w.HTMLDialogElement.prototype.close = function () { this.open = false; };
   if (learningSaved) w.localStorage.setItem('sushi-type-learning-v1', learningSaved);
   if (saved) w.localStorage.setItem('sushi-type-english-v2', saved);
-  w.eval(['core.js', 'phrases.js', 'sushi.js', 'study-core.js', 'activity.js', 'study-cards.js', 'study.js', 'sound.js', 'app.js'].map(file => readFileSync(root + 'dist/' + file, 'utf8').replace(/^import .+;\n/gm, '').replace(/export /g, '')).join('\n'));
+  w.eval(['core.js', 'phrases.js', 'sushi.js', 'study-scheduler.js', 'study-core.js', 'activity.js', 'study-cards.js', 'study.js', 'sound.js', 'app.js'].map(file => readFileSync(root + 'dist/' + file, 'utf8').replace(/^import .+;\n/gm, '').replace(/export /g, '')).join('\n'));
   const q = selector => w.document.querySelector(selector);
   const click = selector => { assert.ok(q(selector), selector); q(selector).click(); };
   const key = (key, extras = {}) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extras }));
@@ -243,4 +245,39 @@ test('daily aggregate is kept when detailed logs roll off and is available from 
   assert.ok(q('.activity-calendar svg').getAttribute('aria-label').includes('3500回')); assert.equal(w.document.querySelectorAll('.activity-recent tbody tr').length, 7);
   click('#close-dialog'); click('#start-study'); click('[data-study-deck="vocabulary"]'); click('#study-begin'); click('#study-reveal');
   const saved = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1')); assert.equal(saved.activity[key].attempts, 3501); assert.equal(saved.logs.length, 1); w.close();
+});
+
+test('legacy progress migrates once, prioritizes due cards and saves real FSRS reviews through reload', () => {
+  const at = Date.now(), day = 86400000, id = 'learn-word:apple';
+  const old = { stage: 2, due: at - 60000, introducedAt: at - 5 * day, lastReviewedAt: at - 3 * day, attempts: 2, successes: 2, lapses: 0 };
+  const logs = [{ id, kind: 'new', outcome: 'recalled', at: at - 4 * day }, { id, kind: 'review', outcome: 'recalled', at: at - 3 * day }];
+  const { q, click, w } = setup(null, JSON.stringify({ version: 2, progress: { [id]: old }, logs }));
+  const stored = () => JSON.parse(w.localStorage.getItem('sushi-type-learning-v1'));
+  assert.equal(stored().version, 3); assert.equal(stored().scheduler.engine, 'fsrs-6');
+  assert.equal(stored().progress[id].due, old.due); assert.equal(stored().progress[id].fsrs.reps, 2);
+  click('#start-study'); click('#study-method');
+  assert.ok(q('.study-method').textContent.includes('FSRS')); assert.equal(q('.study-method').textContent.includes('1・3・7・14・30・60日'), false);
+  click('#study-method-back'); click('[data-study-deck="vocabulary"]'); click('#study-begin');
+  assert.equal(q('#study-mask').textContent, 'a____');
+  for (const key of 'apple') q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  const reviewed = stored(); assert.equal(reviewed.progress[id].fsrs.reps, 3); assert.equal(reviewed.progress[id].attempts, 3);
+  assert.equal(reviewed.logs.at(-1).rating, 3); assert.equal(reviewed.logs.at(-1).scheduled, true);
+  assert.ok(reviewed.progress[id].due > at); assert.equal(reviewed.logs.at(-1).nextDue, reviewed.progress[id].due);
+  click('#study-stop'); click('#study-finish-now'); assert.ok(q('.study-recap small').textContent.includes('次の復習：'));
+  const saved = w.localStorage.getItem('sushi-type-learning-v1'); const reload = setup(null, saved);
+  assert.equal(reload.w.localStorage.getItem('sushi-type-learning-v1'), saved);
+  reload.w.close(); w.close();
+});
+
+test('a card that becomes due on the preparation screen is scheduled when starting the course', () => {
+  const at = Date.now(), day = 86400000, id = 'learn-word:apple';
+  const old = { stage: 1, due: at + 1000, introducedAt: at - 2 * day, lastReviewedAt: at - day, attempts: 1, successes: 1, lapses: 0 };
+  const { q, click, advance, w } = setup(null, JSON.stringify({ version: 2, progress: { [id]: old }, logs: [] }));
+  click('#start-study'); click('[data-study-deck="vocabulary"]'); advance(2); click('#study-begin');
+  assert.equal(q('#study-mask').textContent, 'a____');
+  for (const key of 'apple') q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  const result = JSON.parse(w.localStorage.getItem('sushi-type-learning-v1'));
+  assert.equal(result.logs.at(-1).kind, 'review'); assert.equal(result.logs.at(-1).scheduled, true);
+  assert.equal(result.progress[id].attempts, 2); assert.equal(result.progress[id].fsrs.reps, 1);
+  assert.ok(result.progress[id].due > at + 2000); w.close();
 });

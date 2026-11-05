@@ -79,21 +79,25 @@ test('due reviews lead the queue, and fresh or early practice items are not lock
   assert.equal(planStudy(cards, progress, now).entries.length, 12);
   assert.ok(planStudy(cards, progress, now).entries.every(item => item.kind === 'extra'));
   assert.equal(planStudy(STUDY_DECKS[1].cards, progress, now).entries.length, 12);
-  const tomorrow = planStudy(cards, progress, now + STUDY_DAY);
-  assert.equal(tomorrow.entries[0].kind, 'review'); assert.equal(tomorrow.entries.length, 12);
+  const nextDue = Math.min(...Object.values(progress).map(item => item.due));
+  const duePlan = planStudy(cards, progress, nextDue);
+  assert.equal(duePlan.entries[0].kind, 'review'); assert.equal(duePlan.entries.length, 12);
 });
 test('unanswered newly introduced cards are never mistaken for delayed recalls', () => {
   const introduced = freshProgress(); const planned = planStudy(cards, introduced, now + STUDY_DAY);
   assert.equal(planned.entries[0].kind, 'new'); assert.equal(planned.entries[0].delayed, false);
 });
-test('successful due recall advances spacing; failed and hinted answers return in ten minutes', () => {
+test('FSRS grows intervals after due recall; failed and hinted answers return in ten minutes', () => {
   const p = freshProgress(); const first = recordStudy(p, { id: cards[0].id, kind: 'new', outcome: 'recalled' }, now).progress;
-  assert.equal(first[cards[0].id].due, now + STUDY_DAY); assert.equal(first[cards[0].id].stage, 1);
-  const next = recordStudy(first, { id: cards[0].id, kind: 'review', outcome: 'recalled' }, now + STUDY_DAY).progress;
-  assert.equal(next[cards[0].id].due, now + STUDY_DAY * 4);
+  const firstDue = first[cards[0].id].due;
+  assert.equal(firstDue, now + 2 * STUDY_DAY); assert.equal(first[cards[0].id].fsrs.reps, 1);
+  const next = recordStudy(first, { id: cards[0].id, kind: 'review', outcome: 'recalled' }, firstDue).progress;
+  const nextDue = next[cards[0].id].due;
+  assert.equal(nextDue, firstDue + STUDY_DAY * 11);
+  assert.ok(next[cards[0].id].fsrs.stability > first[cards[0].id].fsrs.stability);
   for (const outcome of ['forgot', 'assisted']) {
-    const failed = recordStudy(next, { id: cards[0].id, kind: 'review', outcome }, now + STUDY_DAY * 4).progress;
-    assert.equal(failed[cards[0].id].stage, 0); assert.equal(failed[cards[0].id].due, now + STUDY_DAY * 4 + STUDY_RELEARN);
+    const failed = recordStudy(next, { id: cards[0].id, kind: 'review', outcome }, nextDue).progress;
+    assert.equal(failed[cards[0].id].fsrs.state, 3); assert.equal(failed[cards[0].id].due, nextDue + STUDY_RELEARN);
   }
 });
 test('extra practice and immediate retries never change review schedules', () => {
