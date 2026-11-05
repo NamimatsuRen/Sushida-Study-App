@@ -59,5 +59,5 @@ export function renderStudyActivity(activity, now = Date.now()) {
     <div class="activity-calendar"><svg viewBox="0 0 352 200" role="img" aria-label="直近13週間で${view.activeDays}日、${view.total}回の挑戦。今日${view.today.attempts}回。色が濃いほど挑戦した回数が多い日です。">${monthLabels}${weekdayNames.map((name, i) => `<text x="8" y="${44 + i * 24}">${name}</text>`).join('')}${cells}</svg></div>
     <div class="activity-bottom"><span>${view.activeDays ? `この期間に${view.activeDays}日・${number(view.total)}回の挑戦` : '1問取り組むと、このカレンダーに色が付きます。'}</span><span class="activity-legend" aria-label="1〜4回、5〜14回、15〜29回、30回以上の順に濃く表示">少ない ${[0, 1, 2, 3, 4].map(level => `<i class="activity-level-${level}"></i>`).join('')} 多い</span></div>
     <details class="activity-recent"><summary>直近7日の日別記録を見る</summary><table><caption class="sr-only">日ごとの挑戦数と追加ヒントなしの完答数</caption><thead><tr><th scope="col">日付</th><th scope="col">挑戦</th><th scope="col">追加ヒントなし</th></tr></thead><tbody>${view.recent.map(day => `<tr><th scope="row">${day.key}</th><td>${number(day.attempts)}回</td><td>${number(day.correct)}回</td></tr>`).join('')}</tbody></table></details>
-    <p class="activity-note">周回・ヒント付き・時間切れも挑戦に含みます。この端末の日付で集計し、このブラウザに保存します。</p></section>`;
+    <p class="activity-note">周回・ヒント付き・時間切れも挑戦に含みます。この端末の日付で集計します。保存状況は画面下で確認できます。</p></section>`;
 }

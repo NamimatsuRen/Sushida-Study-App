@@ -3,13 +3,13 @@ import { STUDY_DECKS } from './study-cards.js';
 import { StudyRound, planStudy, introduceStudy, recordStudy, delayedStudyStats, validStudyProgress, parseStudyMarkdown, STUDY_PRICES } from './study-core.js';
 import { FSRS_ENGINE, FSRS_CONFIG, FSRS_LIBRARY_VERSION } from './study-scheduler.js';
 
-export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }) {
+export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast, storage = localStorage }) {
   let studyState = { progress: {}, logs: [], activity: {}, custom: null };
   let deck = null, round = null, plan = null, route = 'menu', composing = false;
   let award = 0, lastStudyTick = 0, advanceAt = null, advanceWait = 0, lastOutcome = null;
   const storageKey = 'sushi-type-learning-v1';
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+    const saved = JSON.parse(storage.getItem(storageKey) || 'null');
     if (saved) {
       if (Array.isArray(saved.logs)) studyState.logs = saved.logs.filter(log => log && typeof log.id === 'string' && ['recalled', 'assisted', 'forgot'].includes(log.outcome) && Number.isFinite(log.at)).slice(-2000);
       studyState.progress = validStudyProgress(saved.progress, studyState.logs);
@@ -25,7 +25,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
   const q = selector => screen.querySelector(selector);
   function save() {
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ version: 3, scheduler: { engine: FSRS_ENGINE, libraryVersion: FSRS_LIBRARY_VERSION, requestRetention: FSRS_CONFIG.request_retention }, activity: studyState.activity, progress: studyState.progress, logs: studyState.logs.slice(-2000), markdown: studyState.custom?.markdown || '' }));
+      storage.setItem(storageKey, JSON.stringify({ version: 3, scheduler: { engine: FSRS_ENGINE, libraryVersion: FSRS_LIBRARY_VERSION, requestRetention: FSRS_CONFIG.request_retention }, activity: studyState.activity, progress: studyState.progress, logs: studyState.logs.slice(-2000), markdown: studyState.custom?.markdown || '' }));
       return true;
     } catch { toast('学習記録を保存できません。ブラウザのストレージ設定をご確認ください。'); return false; }
   }
@@ -49,7 +49,7 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
       <div class="study-summary"><div><span>いま復習できる</span><b>${totalDue}<small>枚</small></b></div><div><span>今回のスタイル</span><b>周回<small>時間いっぱい</small></b></div><div><span>翌日以降・追加ヒントなし</span><b>${stats.total ? `${stats.correct}<small> / ${stats.total}回</small>` : '—'}</b></div></div>
       <div class="study-decks">${plans.map(({ item, available }, i) => `<article class="study-deck"><div class="study-deck-art">${sushi(item.sushi, i % 6)}</div><span class="study-deck-label">${escape(item.label)}</span><h2>${escape(item.title)}</h2><p>${escape(item.description)}</p><div class="study-deck-status"><span>${available.dueCount}枚 復習待ち</span><span>未学習 ${available.unseenCount}枚</span></div><button class="red-button" data-study-deck="${escape(item.id)}">${available.entries.length ? '今日のひと皿へ' : '復習の予定を見る'} →</button></article>`).join('')}</div>
       ${renderStudyActivity(studyState.activity, Date.now())}<div class="study-menu-actions"><button class="wood-button" id="study-import">＋ Markdownから問題を登録</button><button class="plain-button" id="study-method">学び方と研究の根拠</button><button class="plain-button" id="study-exit">タイトルへ戻る</button></div>
-      <p class="study-footnote">手掛かりなしの後日確認：${stats.freeTotal ? stats.freeCorrect + " / " + stats.freeTotal + "回正答" : "まだ記録がありません"}。<br>正解したらそのまま次へ。枚数上限なしで、制限時間まで周回します。初回練習や同じ日の解き直しは、翌日以降・追加ヒントなしに含めません。<br>集計は保存した直近2,000回答が対象です。記録はこのブラウザに保存され、端末間同期はありません。</p>`;
+      <p class="study-footnote">手掛かりなしの後日確認：${stats.freeTotal ? stats.freeCorrect + " / " + stats.freeTotal + "回正答" : "まだ記録がありません"}。<br>正解したらそのまま次へ。枚数上限なしで、制限時間まで周回します。初回練習や同じ日の解き直しは、翌日以降・追加ヒントなしに含めません。<br>集計は保存した直近2,000回答が対象です。ゲストの記録はこのブラウザに保存。ログイン後はアカウントに同期します。保存状況は画面下に表示します。</p>`;
     screen.querySelectorAll('[data-study-deck]').forEach(button => button.onclick = () => prepare(studyAllDecks().find(item => item.id === button.dataset.studyDeck)));
     q('#study-exit').onclick = showTitle;
     q('#study-import').onclick = importMenu;
@@ -274,6 +274,12 @@ export function createStudyUI({ screen, escape, sushi, sound, showTitle, toast }
   }
   return {
     open: menu,
+    openDeck: id => prepare(studyAllDecks().find(item => item.id === id) || STUDY_DECKS[0]),
+    homeData() {
+      const activity = studyActivityView(studyState.activity);
+      const decks = studyAllDecks().map(item => ({ ...item, ...planStudy(item.cards, studyState.progress, Date.now()), practiced: item.cards.filter(card => studyState.progress[card.id]?.attempts > 0).length }));
+      return { activity, decks, due: decks.reduce((sum, item) => sum + item.dueCount, 0) };
+    },
     activityMarkup: () => renderStudyActivity(studyState.activity, Date.now()),
     frame: tick,
     pause,

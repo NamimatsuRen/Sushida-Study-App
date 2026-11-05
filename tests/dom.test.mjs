@@ -31,7 +31,7 @@ function setup(saved = null, learningSaved = null, mockAudio = false) {
   w.HTMLDialogElement.prototype.close = function () { this.open = false; };
   if (learningSaved) w.localStorage.setItem('sushi-type-learning-v1', learningSaved);
   if (saved) w.localStorage.setItem('sushi-type-english-v2', saved);
-  w.eval(['core.js', 'phrases.js', 'sushi.js', 'study-scheduler.js', 'study-core.js', 'activity.js', 'study-cards.js', 'study.js', 'sound.js', 'app.js'].map(file => readFileSync(root + 'dist/' + file, 'utf8').replace(/^import .+;\n/gm, '').replace(/export /g, '')).join('\n'));
+  w.eval(['core.js', 'phrases.js', 'sushi.js', 'study-scheduler.js', 'study-core.js', 'activity.js', 'study-cards.js', 'study.js', 'sound.js', 'config.js', 'account-store.js', 'auth.js', 'auth-ui.js', 'app.js'].map(file => readFileSync(root + 'dist/' + file, 'utf8').replace(/^import .+;\n/gm, '').replace(/export /g, '')).join('\n'));
   const q = selector => w.document.querySelector(selector);
   const click = selector => { assert.ok(q(selector), selector); q(selector).click(); };
   const key = (key, extras = {}) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extras }));
@@ -280,4 +280,17 @@ test('a card that becomes due on the preparation screen is scheduled when starti
   assert.equal(result.logs.at(-1).kind, 'review'); assert.equal(result.logs.at(-1).scheduled, true);
   assert.equal(result.progress[id].attempts, 2); assert.equal(result.progress[id].fsrs.reps, 1);
   assert.ok(result.progress[id].due > at + 2000); w.close();
+});
+
+test('learning home shows real zero progress, opens a course directly and links to account and records', () => {
+  const { w, q, click } = setup();
+  assert.ok(q('.learning-home')); assert.equal(w.document.querySelectorAll('[data-home-deck]').length, 3);
+  assert.equal(q('.home-course-progress').getAttribute('aria-valuenow'), '0');
+  click('[data-home-deck="expressions"]'); assert.ok(q('#study-begin')); assert.ok(q('.study-heading').textContent.includes('お勧め'));
+  click('#home-link'); click('#home-records'); assert.ok(q('#dialog').open); assert.ok(q('.activity-panel'));
+  click('#close-dialog'); click('#home-login'); assert.ok(q('#auth-form')); click('#close-dialog');
+  click('[data-home-deck="vocabulary"]'); click('#study-begin');
+  for (const key of 'apple') q('#study-answer').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  click('#home-link'); assert.equal(q('.home-course-progress').getAttribute('aria-valuenow'), '1');
+  assert.ok(q('.home-stats strong').textContent.startsWith('1')); w.close();
 });

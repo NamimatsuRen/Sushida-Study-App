@@ -3,6 +3,9 @@ import { createStudyUI } from './study.js';
 import { COURSES, MODES, PRICES, TYPES, BONUS_EVERY, TypingGame, yen } from './core.js';
 import { PHRASES } from './phrases.js';
 import { sushi } from './sushi.js';
+import { accountStore } from './account-store.js';
+import { authController } from './auth.js';
+import { mountAccountUI } from './auth-ui.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = text => String(text).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -10,7 +13,7 @@ const screen = $('#screen');
 const defaults = { sound: true, volume: .35, translation: true, keyboard: false };
 let settings = { ...defaults }, history = [], bests = {}, storageAvailable = true;
 try {
-  const saved = JSON.parse(localStorage.getItem('sushi-type-english-v2') || 'null');
+  const saved = JSON.parse(accountStore.getItem('sushi-type-english-v2') || 'null');
   if (saved) {
     for (const key of ['sound', 'translation', 'keyboard']) if (typeof saved.settings?.[key] === 'boolean') settings[key] = saved.settings[key];
     if (typeof saved.settings?.volume === 'number' && Number.isFinite(saved.settings.volume)) settings.volume = Math.max(0, Math.min(1, saved.settings.volume));
@@ -23,7 +26,7 @@ let lastTick = 0, countdownTimer = null, displayedPhrase = null, touchUsed = fal
 let renderedIndex = -1, renderedTranslation = null;
 let toastTimer;
 const soundFX = new SushiSound({ enabled: () => settings.sound, volume: () => settings.volume });
-const studyUI = createStudyUI({ screen, escape, sushi, sound, showTitle: title, toast });
+const studyUI = createStudyUI({ screen, escape, sushi, sound, showTitle: title, toast, storage: accountStore });
 
 function toast(message) {
   clearTimeout(toastTimer);
@@ -32,7 +35,7 @@ function toast(message) {
   toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 3500);
 }
 function persist() {
-  try { localStorage.setItem('sushi-type-english-v2', JSON.stringify({ settings, history, bests })); }
+  try { accountStore.setItem('sushi-type-english-v2', JSON.stringify({ settings, history, bests })); }
   catch { storageAvailable = false; toast('記録を保存できません。ブラウザのストレージ設定を確認してください。'); }
 }
 function initAudio() { return soundFX.init(); }
@@ -50,15 +53,18 @@ function cancelCountdown() { clearInterval(countdownTimer); countdownTimer = nul
 function title() {
   cancelCountdown(); phase = 'title'; game = null;
   screen.className = 'screen title-screen';
-  screen.innerHTML = `
-    <div class="noren"><i></i><i></i><i></i><i></i><i></i><span>いらっしゃいませ</span></div>
-    <div class="title-heading"><p class="edition">THE ENGLISH TYPING CHALLENGE</p><h1>寿司<span>タイプ</span><b>ENGLISH</b></h1><p class="title-tagline">思い出すほど、身につく。</p></div>
-    <div class="title-sushi"><div class="hero-side">${sushi('shrimp', 2)}</div><div class="hero-center">${sushi('tuna', 3)}</div><div class="hero-side right">${sushi('salmon', 4)}</div></div>
-    <button id="start-study" class="red-button title-start">学んで遊ぶ <small>LEARN</small><span>▶</span></button><button id="start-menu" class="plain-button arcade-entry">タイピングだけで遊ぶ →</button>
-    <p class="start-hint">単語 → 熟語 → 例文。頭文字を頼りに思い出そう。</p>
-    <div class="title-bottom"><span>手助けを使っても、次の復習につなげよう。</span></div>`;
+  const home = studyUI.homeData();
+  screen.className = 'screen title-screen learning-home';
+  screen.innerHTML = `<section class="home-hero"><div class="home-hero-copy"><p class="eyebrow">A LITTLE PRACTICE, EVERY DAY</p><h1>思い出すたび、<br><em>できる</em>が増える。</h1><p class="home-lead">単語から、フレーズ、例文へ。<br>英語をひと皿ずつ、自分のペースで。</p><div class="home-actions"><button id="start-study" class="red-button">${home.due ? '今日の復習をはじめる' : '学習をはじめる'} <span>→</span></button><button id="start-menu" class="plain-button arcade-entry">タイピングだけで遊ぶ ↗</button></div><p class="home-reassurance">登録なしで、すぐに体験できます。</p></div><div class="home-illustration" aria-hidden="true"><div class="illustration-orbit"></div><div class="hero-word-card"><span>りんごを英語で？</span><b>a<span>p</span>ple</b><i>THINK · TYPE · REMEMBER</i></div><div class="hero-sushi">${sushi('shrimp', 1)}</div><span class="illustration-note">ひと皿ずつ、成長中。</span><span class="illustration-spark one">✦</span><span class="illustration-spark two">✦</span></div></section>
+    <section class="home-stats" aria-label="学習のようす"><div><span class="home-stat-icon" aria-hidden="true">✓</span><p>今日の挑戦<strong>${home.activity.today.attempts.toLocaleString('ja-JP')}<small>回</small></strong></p></div><div><span class="home-stat-icon" aria-hidden="true">↻</span><p>いま復習できる<strong>${home.due}<small>問</small></strong></p></div><div><span class="home-stat-icon" aria-hidden="true">✦</span><p>${home.activity.streakIncludesToday ? '今日まで' : '昨日まで'}の連続<strong>${home.activity.streak}<small>日</small></strong></p></div></section>
+    <section class="home-course-section"><div class="home-section-heading"><div><p class="eyebrow">FIND YOUR NEXT STEP</p><h2>どこから学ぼう？</h2></div><span>単語 → 熟語 → 例文</span></div><div class="home-courses">${home.decks.map((item, i) => `<button class="home-course home-course-${i % 3}" data-home-deck="${escape(item.id)}"><div class="home-course-art">${sushi(item.sushi, i + 1)}<span>STEP ${String(i + 1).padStart(2, '0')}</span></div><div class="home-course-body"><span class="home-course-label">${escape(item.label)}</span><h3>${i === 0 ? 'まずは、ひとつの単語から' : i === 1 ? 'ことばを、つなげてみよう' : i === 2 ? '文章で、思いを伝えよう' : escape(item.title)}</h3><p>${escape(item.description)}</p><div class="home-course-meta"><span>1皿 ${item.plateSeconds || 6}秒</span><span>${item.cards.length}問</span></div><div class="home-course-progress" role="progressbar" aria-label="${escape(item.label)}で取り組んだ問題" aria-valuemin="0" aria-valuemax="${item.cards.length}" aria-valuenow="${item.practiced}"><i style="width:${item.practiced / item.cards.length * 100}%"></i></div><div class="home-course-bottom"><span>取り組み ${item.practiced} / ${item.cards.length}</span><b>${item.dueCount ? '復習 ' + item.dueCount + '問' : 'はじめる'} →</b></div></div></button>`).join('')}</div><p class="home-progress-note">「取り組み」は一度回答した問題の数です。習得度は後日の復習で確かめましょう。</p></section>
+    <section class="home-bottom"><div><span class="eyebrow">YOUR EVERYDAY LEARNING</span><h2>小さな練習を、確かな記録に。</h2><p>毎日の挑戦をカレンダーに。復習のタイミングも、自動で調整します。</p></div><button id="home-records" class="wood-button">学習の記録を見る →</button></section>
+    ${!accountStore.user ? '<section class="home-account-callout"><div><b>学びの続きを、どこからでも。</b><p>ログインすると、学習記録をアカウントに保存できます。</p></div><button id="home-login" class="plain-button">ログイン / 新規登録 →</button></section>' : accountStore.canImportGuest() ? '<section class="home-account-callout"><div><b>これまでの学習記録が見つかりました。</b><p>ログイン前の記録を、このアカウントに引き継げます。</p></div><button id="home-login" class="plain-button">記録を引き継ぐ →</button></section>' : ''}`;
   $('#start-study').onclick = () => { initAudio(); phase = 'study'; studyUI.open(); };
   $('#start-menu').onclick = () => { initAudio(); menu(); };
+  screen.querySelectorAll('[data-home-deck]').forEach(button => button.onclick = () => { initAudio(); phase = 'study'; studyUI.openDeck(button.dataset.homeDeck); });
+  $('#home-records').onclick = () => $('#history-button').onclick();
+  if ($('#home-login')) $('#home-login').onclick = () => $('#account-button').onclick();
 }
 function menu() {
   cancelCountdown(); phase = 'menu'; game = null;
@@ -239,7 +245,7 @@ $('#help-button').onclick = () => openDialog('遊び方', `
   <ol class="help-list"><li><b>コースと難易度を選ぶ</b><p>3,000円・5,000円・10,000円の3コース。金額はゲームの目標です。</p></li><li><b>表示された英語を、そのまま入力</b><p>半角英数で1文字ずつ。大文字・小文字はどちらでもOK。単語の間はスペースを打ちます。Enterでの送信やBackspaceでの修正は不要です。</p></li><li><b>打ち切って、お皿をゲット</b><p>流れてしまうとそのお皿の得点は入りません。30文字連続でミスなく打つと、残り時間が2秒増えます。</p></li><li><b>目指せ、元取り！</b><p>食べたお皿の合計 − コース金額がお得になった金額です。結果ではキータイプ数やミスも確認できます。</p></li></ol>
   <div class="help-modes">${Object.values(MODES).map(value => `<p><b>${value.name}</b><span>${value.description}</span></p>`).join('')}</div><p class="small-note">Escで一時停止。タブやウィンドウを離れたときも自動停止します。スマホでは設定から画面キーボードをONにしてください。</p>`);
 $('#settings-button').onclick = () => {
-  openDialog('設定', `<div class="settings-list"><label><span><b>サウンド</b><small>打鍵・ミス・完答・連続完答で音が変わります</small></span><input type="checkbox" id="setting-sound" ${settings.sound ? 'checked' : ''}></label><label class="sound-volume-label" for="setting-volume"><span><b>音量 <output id="sound-volume-value">${Math.round(settings.volume * 100)}%</output></b><small>ボタン音・効果音すべてに適用</small></span><input type="range" id="setting-volume" min="0" max="100" step="5" value="${Math.round(settings.volume * 100)}"></label><div class="sound-preview"><span>音を試す</span><div>${[['click', 'ボタン'], ['key', '打鍵'], ['miss', 'ミス'], ['hint', '文字ヒント'], ['plate', '完答'], ['promote', '連続完答'], ['demote', '学び直し'], ['finish', '終了']].map(([kind, label]) => `<button class="wood-button" data-sound-preview="${kind}">${label}</button>`).join('')}</div></div><label><span><b>日本語の意味を表示</b><small>タイピングモードの英文の上に日本語を表示します</small></span><input type="checkbox" id="setting-translation" ${settings.translation ? 'checked' : ''}></label><label><span><b>画面キーボード</b><small>タイピングモードでタップして遊べます</small></span><input type="checkbox" id="setting-keyboard" ${settings.keyboard ? 'checked' : ''}></label></div><p class="small-note">音量・表示設定はこのブラウザに保存されます。</p>`);
+  openDialog('設定', `<div class="settings-list"><label><span><b>サウンド</b><small>打鍵・ミス・完答・連続完答で音が変わります</small></span><input type="checkbox" id="setting-sound" ${settings.sound ? 'checked' : ''}></label><label class="sound-volume-label" for="setting-volume"><span><b>音量 <output id="sound-volume-value">${Math.round(settings.volume * 100)}%</output></b><small>ボタン音・効果音すべてに適用</small></span><input type="range" id="setting-volume" min="0" max="100" step="5" value="${Math.round(settings.volume * 100)}"></label><div class="sound-preview"><span>音を試す</span><div>${[['click', 'ボタン'], ['key', '打鍵'], ['miss', 'ミス'], ['hint', '文字ヒント'], ['plate', '完答'], ['promote', '連続完答'], ['demote', '学び直し'], ['finish', '終了']].map(([kind, label]) => `<button class="wood-button" data-sound-preview="${kind}">${label}</button>`).join('')}</div></div><label><span><b>日本語の意味を表示</b><small>タイピングモードの英文の上に日本語を表示します</small></span><input type="checkbox" id="setting-translation" ${settings.translation ? 'checked' : ''}></label><label><span><b>画面キーボード</b><small>タイピングモードでタップして遊べます</small></span><input type="checkbox" id="setting-keyboard" ${settings.keyboard ? 'checked' : ''}></label></div><p class="small-note">音量・表示設定は学習記録といっしょに保存されます。</p>`);
   for (const key of ['sound', 'translation', 'keyboard']) $(`#setting-${key}`).onchange = event => {
     settings[key] = event.target.checked; persist(); syncSound(); updateSoundStatus(); initAudio();
     if ($('#virtual-keyboard')) $('#virtual-keyboard').hidden = !settings.keyboard;
@@ -306,3 +312,4 @@ document.addEventListener('click', event => {
   sound('click');
 }, true);
 updateSoundStatus(); title(); requestAnimationFrame(frame);
+mountAccountUI({ auth: authController, store: accountStore, openDialog, escape, toast });
